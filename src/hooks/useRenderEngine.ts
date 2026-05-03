@@ -189,7 +189,6 @@ class RenderEngine {
     await page.render({
       canvasContext: ctx,
       viewport,
-      canvas: this.offscreen,
     }).promise;
 
     return createImageBitmap(this.offscreen);
