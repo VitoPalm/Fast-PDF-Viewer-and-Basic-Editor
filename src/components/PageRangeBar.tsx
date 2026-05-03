@@ -19,10 +19,12 @@ export const PageRangeBar: React.FC = () => {
 
   const { pages: parsedPages, errors, isValid } = usePageRangeParser(input, totalPages);
 
-  // Show the strip when there are valid pages
+  // Show/Hide the strip based on parsedPages
   useEffect(() => {
     if (parsedPages.length > 0) {
-      setShowStrip(true);
+      // Use requestAnimationFrame to avoid "cascading render" lint error
+      const frame = requestAnimationFrame(() => setShowStrip(true));
+      return () => cancelAnimationFrame(frame);
     } else {
       // Small delay before hiding for exit animation
       const t = setTimeout(() => setShowStrip(false), 300);

@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { usePdf, type TextAnnotation } from '../context/PdfContext';
+import { usePdf } from '../context/PdfContext';
 import { useRenderEngine } from '../hooks/useRenderEngine';
 import { v4 as uuidv4 } from 'uuid';
 import { Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { type TextAnnotation } from '../types/pdf';
 
 export const Workspace: React.FC = () => {
   const {

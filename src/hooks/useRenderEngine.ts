@@ -19,7 +19,7 @@ interface RenderRequest {
 // ---------------------------------------------------------------------------
 // LRU Cache
 // ---------------------------------------------------------------------------
-class LRUCache<V> {
+class LRUCache<V extends { close?: () => void }> {
   private map = new Map<string, V>();
   private maxSize: number;
   constructor(maxSize: number) {
@@ -29,7 +29,6 @@ class LRUCache<V> {
   get(key: string): V | undefined {
     const v = this.map.get(key);
     if (v !== undefined) {
-      // Move to end (most-recently used)
       this.map.delete(key);
       this.map.set(key, v);
     }
@@ -40,13 +39,13 @@ class LRUCache<V> {
     if (this.map.has(key)) this.map.delete(key);
     this.map.set(key, value);
     if (this.map.size > this.maxSize) {
-      // Evict oldest
-      const oldest = this.map.keys().next().value!;
-      const evicted = this.map.get(oldest);
-      this.map.delete(oldest);
-      // Close evicted ImageBitmaps to free GPU memory
-      if (evicted && typeof (evicted as any).close === 'function') {
-        (evicted as any).close();
+      const oldest = this.map.keys().next().value;
+      if (oldest !== undefined) {
+        const evicted = this.map.get(oldest);
+        this.map.delete(oldest);
+        if (evicted && typeof evicted.close === 'function') {
+          evicted.close();
+        }
       }
     }
   }
@@ -54,24 +53,23 @@ class LRUCache<V> {
   has(key: string) { return this.map.has(key); }
   clear() {
     this.map.forEach(v => {
-      if (v && typeof (v as any).close === 'function') (v as any).close();
+      if (v && typeof v.close === 'function') v.close();
     });
     this.map.clear();
   }
 }
 
 // ---------------------------------------------------------------------------
-// Render Engine (singleton-ish, created per hook instance but shared via ref)
+// Render Engine
 // ---------------------------------------------------------------------------
 class RenderEngine {
-  private thumbCache = new LRUCache<ImageBitmap>(250);   // L2: thumbnails
-  private fullCache  = new LRUCache<ImageBitmap>(8);     // L1: full-res pages
+  private thumbCache = new LRUCache<ImageBitmap>(250);
+  private fullCache  = new LRUCache<ImageBitmap>(8);
   private queue: RenderRequest[] = [];
   private processing = false;
   private rafId: number | null = null;
   private disposed = false;
 
-  // Shared offscreen canvas to avoid creating one per render
   private offscreen: HTMLCanvasElement = document.createElement('canvas');
 
   private static PRIORITY_ORDER: Record<Priority, number> = { urgent: 0, high: 1, low: 2 };
@@ -84,10 +82,6 @@ class RenderEngine {
     return scale <= 0.3 ? this.thumbCache : this.fullCache;
   }
 
-  /**
-   * Request a page render. Returns a cached ImageBitmap if available,
-   * otherwise queues the render with the given priority.
-   */
   requestRender(
     docId: string,
     pdfjsDoc: PDFDocumentProxy,
@@ -100,10 +94,8 @@ class RenderEngine {
     const cached = cache.get(key);
     if (cached) return Promise.resolve(cached);
 
-    // De-duplicate: if there's already a pending request for this key, just attach to it
     const existing = this.queue.find(r => r.key === key);
     if (existing) {
-      // Upgrade priority if needed
       if (RenderEngine.PRIORITY_ORDER[priority] < RenderEngine.PRIORITY_ORDER[existing.priority]) {
         existing.priority = priority;
         this.sortQueue();
@@ -123,7 +115,6 @@ class RenderEngine {
     });
   }
 
-  /** Cancel all pending requests for a specific docId (useful when switching documents) */
   cancelForDoc(docId: string) {
     this.queue = this.queue.filter(r => {
       if (r.key.startsWith(docId + ':')) {
@@ -134,7 +125,6 @@ class RenderEngine {
     });
   }
 
-  /** Preload a range of pages as thumbnails in the background */
   preloadRange(docId: string, pdfjsDoc: PDFDocumentProxy, startPage: number, endPage: number, scale = 0.15) {
     for (let i = startPage; i <= endPage; i++) {
       const key = this.cacheKey(docId, i, scale);
@@ -150,7 +140,6 @@ class RenderEngine {
 
   private scheduleProcessing() {
     if (this.processing || this.disposed) return;
-    // Use rAF for urgent/high, requestIdleCallback for low priority
     const next = this.queue[0];
     if (!next) return;
     if (next.priority === 'low' && 'requestIdleCallback' in window) {
@@ -170,7 +159,6 @@ class RenderEngine {
 
     try {
       const cache = this.getCache(request.scale);
-      // Double-check cache (might have been populated while queued)
       const cached = cache.get(request.key);
       if (cached) {
         request.resolve(cached);
@@ -216,9 +204,6 @@ class RenderEngine {
   }
 }
 
-// ---------------------------------------------------------------------------
-// React Hook
-// ---------------------------------------------------------------------------
 export function useRenderEngine() {
   const engineRef = useRef<RenderEngine | null>(null);
 

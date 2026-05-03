@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { usePdf } from '../context/PdfContext';
 import { useRenderEngine } from '../hooks/useRenderEngine';
 
@@ -13,19 +13,24 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
 
   // Track which page numbers have their bitmap ready
   const [bitmaps, setBitmaps] = useState<Record<number, ImageBitmap>>({});
-  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
+  
+  // Deriving visiblePages from props instead of using an effect with state
+  const visiblePages = useMemo(() => new Set(pageNumbers), [pageNumbers]);
 
-  // When pageNumbers change, mark new ones for rendering
+  // Clean up bitmaps for pages no longer in the list
   useEffect(() => {
-    setVisiblePages(new Set(pageNumbers));
-    // Clear bitmaps for pages no longer in the list
     setBitmaps(prev => {
       const numSet = new Set(pageNumbers);
       const next: Record<number, ImageBitmap> = {};
+      let changed = false;
       for (const [key, bmp] of Object.entries(prev)) {
-        if (numSet.has(Number(key))) next[Number(key)] = bmp;
+        if (numSet.has(Number(key))) {
+          next[Number(key)] = bmp;
+        } else {
+          changed = true;
+        }
       }
-      return next;
+      return changed ? next : prev;
     });
   }, [pageNumbers]);
 
@@ -56,7 +61,7 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
 
     renderAll();
     return () => { cancelled = true; };
-  }, [pageNumbers, pages, documents, requestThumbnail]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pageNumbers, pages, documents, requestThumbnail, bitmaps]);
 
   const handleThumbnailClick = useCallback((pageNum: number) => {
     const pageInfo = pages[pageNum - 1];

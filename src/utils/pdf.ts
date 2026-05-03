@@ -1,5 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { PDFDocument, rgb } from 'pdf-lib';
+import { type TextAnnotation } from '../types/pdf';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -78,9 +80,6 @@ export const renderPageToDataUrl = async (
   await page.render(renderContext).promise;
   return canvas.toDataURL();
 };
-
-import { PDFDocument, rgb } from 'pdf-lib';
-import { type TextAnnotation } from '../context/PdfContext';
 
 export const exportModifiedPdf = async (
   documents: Record<string, PdfDocumentInfo>,

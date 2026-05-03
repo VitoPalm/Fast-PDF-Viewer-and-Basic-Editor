@@ -1,42 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument } from '../utils/pdf';
-
-export interface TextAnnotation {
-  id: string;
-  pageId: string;
-  text: string;
-  x: number;
-  y: number;
-  fontSize: number;
-  color: string;
-}
-
-interface PdfContextType {
-  documents: Record<string, PdfDocumentInfo>;
-  pages: PdfPageInfo[];
-  activePageId: string | null;
-  selectedPageIds: Set<string>;
-  annotations: TextAnnotation[];
-  isLoading: boolean;
-  addFiles: (files: File[]) => Promise<void>;
-  setPages: React.Dispatch<React.SetStateAction<PdfPageInfo[]>>;
-  setActivePageId: (id: string | null) => void;
-  removePage: (id: string) => void;
-  removePages: (ids: string[]) => void;
-  extractPages: (ids: string[]) => void;
-  clearAll: () => void;
-  addAnnotation: (annot: TextAnnotation) => void;
-  updateAnnotation: (id: string, updates: Partial<TextAnnotation>) => void;
-  removeAnnotation: (id: string) => void;
-  // Multi-select
-  togglePageSelection: (id: string) => void;
-  selectPageRange: (startIndex: number, endIndex: number) => void;
-  selectPagesByNumbers: (pageNumbers: number[]) => void;
-  selectAll: () => void;
-  clearSelection: () => void;
-  invertSelection: () => void;
-}
+import { type TextAnnotation, type PdfContextType } from '../types/pdf';
 
 const PdfContext = createContext<PdfContextType | undefined>(undefined);
 
@@ -112,7 +77,6 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [activePageId]);
 
-  /** Remove multiple pages at once */
   const removePages = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
     setPages(prev => {
@@ -129,7 +93,6 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [activePageId]);
 
-  /** Keep only the specified pages (in their current order), discard everything else */
   const extractPages = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
     setPages(prev => {
@@ -149,7 +112,6 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSelectedPageIds(new Set());
   }, []);
 
-  // ---- Multi-select ----
   const togglePageSelection = useCallback((id: string) => {
     setSelectedPageIds(prev => {
       const next = new Set(prev);
@@ -172,12 +134,11 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, []);
 
-  /** Select pages by their 1-indexed position in the pages array */
   const selectPagesByNumbers = useCallback((pageNumbers: number[]) => {
     setPages(prev => {
       const newSel = new Set<string>();
       for (const num of pageNumbers) {
-        const page = prev[num - 1]; // 1-indexed → 0-indexed
+        const page = prev[num - 1];
         if (page) newSel.add(page.id);
       }
       setSelectedPageIds(newSel);

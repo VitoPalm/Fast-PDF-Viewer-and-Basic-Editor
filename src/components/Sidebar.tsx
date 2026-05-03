@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
+import { DragDropContext, Droppable, Draggable, type DropResult, type DraggableProvided } from '@hello-pangea/dnd';
 import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare } from 'lucide-react';
 import { usePdf } from '../context/PdfContext';
 import { useRenderEngine } from '../hooks/useRenderEngine';
 import { PageRangeBar } from './PageRangeBar';
 import { DocumentMinimap } from './DocumentMinimap';
+import { type PdfPageInfo } from '../utils/pdf';
 
 const ITEM_HEIGHT = 88;
 const OVERSCAN = 5;
@@ -84,7 +85,7 @@ export const Sidebar: React.FC = () => {
 
   // Build the visible items list
   const visibleItems = useMemo(() => {
-    const items: { page: typeof pages[0]; index: number }[] = [];
+    const items: { page: PdfPageInfo; index: number }[] = [];
     for (let i = startIndex; i <= endIndex && i < pages.length; i++) {
       items.push({ page: pages[i], index: i });
     }
@@ -201,11 +202,11 @@ export const Sidebar: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Thumbnail item (shared between virtual list and drag clone)
+// Thumbnail item
 // ---------------------------------------------------------------------------
-const ThumbnailItemContent: React.FC<{
-  provided: any;
-  page: any;
+interface ThumbnailItemContentProps {
+  provided: DraggableProvided;
+  page: PdfPageInfo;
   index: number;
   isActive: boolean;
   isSelected: boolean;
@@ -214,7 +215,11 @@ const ThumbnailItemContent: React.FC<{
   onClick: (e: React.MouseEvent) => void;
   onRemove: () => void;
   style?: React.CSSProperties;
-}> = ({ provided, page, index, isActive, isSelected, isDragging, docName, onClick, onRemove, style }) => {
+}
+
+const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({ 
+  provided, page, index, isActive, isSelected, isDragging, docName, onClick, onRemove, style 
+}) => {
   return (
     <div
       ref={provided.innerRef}
@@ -257,9 +262,9 @@ const ThumbnailItemContent: React.FC<{
 };
 
 // ---------------------------------------------------------------------------
-// Lazy-rendered thumbnail using the render engine
+// Lazy-rendered thumbnail
 // ---------------------------------------------------------------------------
-const LazyThumbnail: React.FC<{ page: any }> = ({ page }) => {
+const LazyThumbnail: React.FC<{ page: PdfPageInfo }> = ({ page }) => {
   const { documents } = usePdf();
   const { requestThumbnail } = useRenderEngine();
   const canvasRef = useRef<HTMLCanvasElement>(null);
