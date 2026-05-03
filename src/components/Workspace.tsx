@@ -62,7 +62,9 @@ export const Workspace: React.FC = () => {
 
   const lastScrollTime = useRef(0);
   const activeIndexRef = useRef(activeIndex);
-  activeIndexRef.current = activeIndex;
+  useEffect(() => {
+    activeIndexRef.current = activeIndex;
+  }, [activeIndex]);
 
   const goToPage = useCallback((index: number) => {
     if (index >= 0 && index < pages.length) setActivePageId(pages[index].id);

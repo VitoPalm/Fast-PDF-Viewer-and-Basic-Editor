@@ -21,11 +21,11 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
 }) => {
   const { pages, activePageId, selectedPageIds } = usePdf();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [showUpArrow, setShowUpArrow] = useState(false);
   const [showDownArrow, setShowDownArrow] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const PAGE_LINE_HEIGHT = 3;
   const GAP = 1;
@@ -143,8 +143,8 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
       )}
       <div
         ref={(el) => {
-          (scrollRef as any).current = el;
-          (containerRef as any).current = el;
+          scrollRef.current = el;
+          containerRef.current = el;
         }}
         className="document-minimap"
         onMouseDown={handleMouseDown}

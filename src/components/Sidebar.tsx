@@ -60,7 +60,7 @@ export const Sidebar: React.FC = () => {
   const endIndex = Math.min(pages.length - 1, Math.ceil((scrollOffset + containerHeight) / ITEM_HEIGHT) + OVERSCAN);
   const totalScrollHeight = pages.length * ITEM_HEIGHT;
 
-  const handleDragStart = useCallback((start: any) => {
+  const handleDragStart = useCallback((start: { draggableId: string }) => {
     const draggedId = start.draggableId;
     if (selectedPageIds.has(draggedId)) {
       const items = Array.from(pages);
@@ -124,7 +124,7 @@ export const Sidebar: React.FC = () => {
     const pageNum = index + 1;
     const current = rangeInput.trim();
     
-    let newVal = "";
+    let newVal: string;
     if (!current || current.endsWith(',')) {
       newVal = (current ? current + (current.endsWith(' ') ? '' : ' ') : '') + pageNum;
     } else {
