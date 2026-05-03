@@ -1,23 +1,28 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { usePdf } from '../hooks/usePdf';
 import { useRenderEngine } from '../hooks/useRenderEngine';
-import { v4 as uuidv4 } from 'uuid';
-import { Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Trash2, ChevronLeft, ChevronRight, Plus, Download } from 'lucide-react';
 import { type TextAnnotation } from '../types/pdf';
+import { exportModifiedPdf } from '../utils/pdf';
 
 export const Workspace: React.FC = () => {
   const {
     pages, activePageId, setActivePageId, documents,
-    annotations, addAnnotation, updateAnnotation, removeAnnotation
+    annotations, updateAnnotation, removeAnnotation,
+    addFiles, clearAll
   } = usePdf();
   const { requestPage } = useRenderEngine();
+  const [isExporting, setIsExporting] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1.5);
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   const [pageInputValue, setPageInputValue] = useState('');
   const [isEditingPageNum, setIsEditingPageNum] = useState(false);
@@ -95,61 +100,159 @@ export const Workspace: React.FC = () => {
     if (e.key === 'Escape') setIsEditingPageNum(false);
   };
 
-  const handleContainerClick = (e: React.MouseEvent) => {
+  // Panning via mouse drag on the scroll container
+  const handleMouseDown = (e: React.MouseEvent) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Only start panning if clicking on the canvas or its container
     if (e.target !== containerRef.current && e.target !== canvasRef.current) return;
-    if (!activePageId) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
-    const newAnnot: TextAnnotation = {
-      id: uuidv4(),
-      pageId: activePageId,
-      text: 'New Text',
-      x, y,
-      fontSize: 16 / scale,
-      color: '#ef4444'
+
+    setIsPanning(true);
+    panStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: el.scrollLeft,
+      scrollTop: el.scrollTop,
     };
-    addAnnotation(newAnnot);
-    setActiveTextId(newAnnot.id);
+    e.preventDefault();
   };
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 10) {
-      const now = Date.now();
-      if (now - lastScrollTime.current > 400) {
-        if (e.deltaX > 0) goNext();
-        else goPrev();
-        lastScrollTime.current = now;
+  useEffect(() => {
+    if (!isPanning) return;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const dx = e.clientX - panStartRef.current.x;
+      const dy = e.clientY - panStartRef.current.y;
+      el.scrollLeft = panStartRef.current.scrollLeft - dx;
+      el.scrollTop = panStartRef.current.scrollTop - dy;
+    };
+
+    const onMouseUp = () => {
+      setIsPanning(false);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isPanning]);
+
+  // Wheel handler with passive: false so we can preventDefault for page switches
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 10) {
+        const isAtLeftEdge = el.scrollLeft <= 5;
+        const isAtRightEdge = el.scrollLeft + el.clientWidth >= el.scrollWidth - 5;
+        
+        // The canvas width already includes the scale (rendered at that scale)
+        const currentScaledWidth = (canvasRef.current?.width || 0) / (window.devicePixelRatio || 1);
+        const viewportWidth = el.clientWidth;
+        const isNarrowPage = currentScaledWidth < (viewportWidth * 0.7);
+
+        if (isNarrowPage || (e.deltaX < 0 && isAtLeftEdge) || (e.deltaX > 0 && isAtRightEdge)) {
+          const now = Date.now();
+          if (now - lastScrollTime.current > 400) {
+            if (e.deltaX > 0) goNext();
+            else goPrev();
+            lastScrollTime.current = now;
+            e.preventDefault();
+          }
+        }
+        // Otherwise: let the browser natively scroll the content horizontally
       }
-    }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
   }, [goNext, goPrev]);
+
+  const handleScaleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setScale(Math.min(3.0, Math.max(0.5, val)));
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const blob = await exportModifiedPdf(documents, pages, annotations, 1.5);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'modified_document.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to export PDF");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   if (!activePage) {
     return <div className="workspace-content" style={{ alignItems: 'center', color: 'var(--text-secondary)' }}>Select a page from the sidebar.</div>;
   }
 
   return (
-    <div className="workspace-content" style={{ position: 'relative' }} onClick={() => setActiveTextId(null)} onWheel={handleWheel}>
-      <div
-        ref={containerRef}
-        className={`pdf-page-container ${isTransitioning ? 'transitioning' : ''} ${canvasReady ? 'ready' : ''}`}
-        style={{ display: 'inline-block', position: 'relative' }}
-        onClick={handleContainerClick}
-      >
-        <canvas ref={canvasRef} style={{ display: 'block' }} />
-        {pageAnnotations.map(annot => (
-          <DraggableText
-            key={annot.id}
-            annot={annot}
-            scale={scale}
-            isActive={activeTextId === annot.id}
-            onSelect={() => setActiveTextId(annot.id)}
-            onChange={(updates) => updateAnnotation(annot.id, updates)}
-            onRemove={() => removeAnnotation(annot.id)}
-          />
-        ))}
+    <div className="workspace-viewport" style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div className="glass" style={{ padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', borderBottom: '1px solid var(--surface-border)', borderRadius: 0, borderTop: 'none', borderLeft: 'none', borderRight: 'none', zIndex: 10, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
+          <label className="btn btn-secondary">
+            <input 
+              type="file" 
+              multiple 
+              accept="application/pdf" 
+              style={{ display: 'none' }} 
+              onChange={(e) => {
+                if (e.target.files) addFiles(Array.from(e.target.files));
+              }}
+            />
+            <Plus size={16} /> Add PDFs to Merge
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
+          <button className="btn btn-secondary" onClick={clearAll}>Start Over</button>
+          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting}>
+            <Download size={16} /> {isExporting ? 'Exporting...' : 'Export PDF'}
+          </button>
+        </div>
       </div>
+      <div 
+        ref={scrollRef}
+        className={`workspace-content ${isPanning ? 'panning' : ''}`}
+        style={{ flex: 1, minHeight: 0, overflow: 'auto', position: 'relative', display: 'flex', padding: '24px' }} 
+        onClick={() => setActiveTextId(null)} 
+      >
+        <div
+          ref={containerRef}
+          className={`pdf-page-container ${isTransitioning ? 'transitioning' : ''} ${canvasReady ? 'ready' : ''} ${isPanning ? 'panning' : ''}`}
+          style={{ flexShrink: 0, margin: 'auto' }}
+          onMouseDown={handleMouseDown}
+        >
+          <canvas ref={canvasRef} style={{ display: 'block' }} />
+          {pageAnnotations.map(annot => (
+            <DraggableText
+              key={annot.id}
+              annot={annot}
+              scale={scale}
+              isActive={activeTextId === annot.id}
+              onSelect={() => setActiveTextId(annot.id)}
+              onChange={(updates) => updateAnnotation(annot.id, updates)}
+              onRemove={() => removeAnnotation(annot.id)}
+            />
+          ))}
+        </div>
+      </div>
+      
       <div className="page-indicator">
         <button className="page-indicator-nav" onClick={goPrev} disabled={activeIndex <= 0}><ChevronLeft size={16} /></button>
         {isEditingPageNum ? (
@@ -178,7 +281,7 @@ export const Workspace: React.FC = () => {
             max="3.0" 
             step="0.1" 
             value={scale} 
-            onChange={(e) => setScale(parseFloat(e.target.value))} 
+            onChange={handleScaleChange} 
           />
           <span className="zoom-label">{Math.round(scale * 100)}%</span>
         </div>

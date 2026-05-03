@@ -70,8 +70,6 @@ class RenderEngine {
   private rafId: number | null = null;
   private disposed = false;
 
-  private offscreen: HTMLCanvasElement = document.createElement('canvas');
-
   private static PRIORITY_ORDER: Record<Priority, number> = { urgent: 0, high: 1, low: 2 };
 
   private cacheKey(docId: string, pageNumber: number, scale: number) {
@@ -180,18 +178,20 @@ class RenderEngine {
     const page = await pdfjsDoc.getPage(pageNumber);
     const viewport = page.getViewport({ scale });
 
-    this.offscreen.width = Math.ceil(viewport.width);
-    this.offscreen.height = Math.ceil(viewport.height);
+    // Create a fresh canvas per render to prevent race conditions
+    // between overlapping renders (which cause flipped/corrupted output)
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
 
-    const ctx = this.offscreen.getContext('2d', { willReadFrequently: false })!;
-    ctx.clearRect(0, 0, this.offscreen.width, this.offscreen.height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: false })!;
 
     await page.render({
       canvasContext: ctx,
       viewport,
     }).promise;
 
-    return createImageBitmap(this.offscreen);
+    return createImageBitmap(canvas);
   }
 
   dispose() {

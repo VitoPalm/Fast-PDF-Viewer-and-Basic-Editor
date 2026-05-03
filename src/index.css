@@ -183,9 +183,11 @@ h1, h2, h3, h4, h5, h6 {
 
 .workspace {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
+  overflow: hidden;
   background-color: #00000030;
 }
 
@@ -193,8 +195,15 @@ h1, h2, h3, h4, h5, h6 {
   flex: 1;
   overflow: auto;
   padding: 24px;
-  display: flex;
-  justify-content: center;
+  scrollbar-gutter: stable;
+}
+
+.workspace-content.panning {
+  cursor: grabbing !important;
+}
+
+.workspace-content.panning * {
+  cursor: grabbing !important;
 }
 
 /* Scrollbar */
@@ -229,10 +238,19 @@ h1, h2, h3, h4, h5, h6 {
 /* Canvas styling */
 .pdf-page-container {
   position: relative;
-  margin-bottom: 24px;
   box-shadow: var(--shadow-lg);
-  background-color: white; /* PDF pages are usually white */
+  background-color: white;
   transition: opacity 0.15s ease, transform 0.15s ease;
+  cursor: grab;
+  margin: 0 auto;
+}
+
+.pdf-page-container.panning {
+  cursor: grabbing !important;
+}
+
+.pdf-page-container.panning canvas {
+  cursor: grabbing !important;
 }
 
 .pdf-page-container.transitioning {
@@ -411,11 +429,15 @@ h1, h2, h3, h4, h5, h6 {
   height: 100%;
   object-fit: contain;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transform: scale(0.9);
+  transition: opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+  z-index: 2;
 }
 
 .thumbnail-canvas.loaded {
   opacity: 1;
+  transform: scale(1);
 }
 
 .thumbnail-shimmer {
@@ -424,6 +446,12 @@ h1, h2, h3, h4, h5, h6 {
   background: linear-gradient(90deg, #e0e0e0 25%, #f0f0f0 50%, #e0e0e0 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
+  z-index: 1;
+  transition: opacity 0.3s ease;
+}
+
+.thumbnail-shimmer.fade-out {
+  opacity: 0;
 }
 
 @keyframes shimmer {
@@ -871,7 +899,6 @@ h1, h2, h3, h4, h5, h6 {
   margin: 0 12px;
   padding: 0 12px;
   border-left: 1px solid var(--surface-border);
-  border-right: 1px solid var(--surface-border);
 }
 
 .zoom-slider {
@@ -925,7 +952,7 @@ h1, h2, h3, h4, h5, h6 {
    ================================================================ */
 
 .page-indicator {
-  position: fixed;
+  position: absolute;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);

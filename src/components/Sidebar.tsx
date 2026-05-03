@@ -366,8 +366,8 @@ const LazyThumbnail: React.FC<{ page: PdfPageInfo }> = ({ page }) => {
 
   return (
     <div className="thumbnail-canvas-wrapper">
+      <div className={`thumbnail-shimmer ${loaded ? 'fade-out' : ''}`} />
       <canvas ref={canvasRef} className={`thumbnail-canvas ${loaded ? 'loaded' : ''}`} />
-      {!loaded && <div className="thumbnail-shimmer" />}
     </div>
   );
 };
