@@ -64,13 +64,7 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
 
       // Rounded-ish line
       ctx.beginPath();
-      // @ts-expect-error - roundRect is relatively new
-      if (typeof ctx.roundRect === 'function') {
-        // @ts-expect-error - roundRect is relatively new
-        ctx.roundRect(2, y, CANVAS_WIDTH - 4, PAGE_LINE_HEIGHT, 1);
-      } else {
-        ctx.rect(2, y, CANVAS_WIDTH - 4, PAGE_LINE_HEIGHT);
-      }
+      ctx.roundRect(2, y, CANVAS_WIDTH - 4, PAGE_LINE_HEIGHT, 1);
       ctx.fill();
     });
   }, [pages, activePageId, selectedPageIds, totalHeight]);
