@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { usePdf } from '../hooks/usePdf';
+import { ChevronUp, ChevronDown } from 'lucide-react';
 
 interface DocumentMinimapProps {
   /** Height of the sidebar list area, for the viewport indicator */
@@ -22,6 +23,9 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [showUpArrow, setShowUpArrow] = useState(false);
+  const [showDownArrow, setShowDownArrow] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const PAGE_LINE_HEIGHT = 3;
   const GAP = 1;
@@ -32,6 +36,33 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
   const viewportRatio = listHeight / Math.max(totalScrollHeight, 1);
   const viewportTop = (scrollOffset / Math.max(totalScrollHeight, 1)) * totalHeight;
   const viewportHeight = Math.max(viewportRatio * totalHeight, 12);
+
+  // Sticky Scroll Logic: Keep the indicator within the minimap's visible area
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const visibleHeight = el.clientHeight;
+    const currentScrollTop = el.scrollTop;
+
+    if (viewportTop < currentScrollTop) {
+      el.scrollTop = viewportTop;
+    } else if (viewportTop + viewportHeight > currentScrollTop + visibleHeight) {
+      el.scrollTop = viewportTop + viewportHeight - visibleHeight;
+    }
+  }, [viewportTop, viewportHeight]);
+
+  // Update arrows visibility
+  const updateArrows = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setShowUpArrow(el.scrollTop > 5);
+    setShowDownArrow(el.scrollTop + el.clientHeight < el.scrollHeight - 5);
+  }, []);
+
+  useEffect(() => {
+    updateArrows();
+  }, [pages.length, viewportTop, updateArrows]);
 
   // Draw the minimap
   useEffect(() => {
@@ -104,22 +135,37 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
   if (pages.length < 20) return null; // Don't show minimap for small docs
 
   return (
-    <div
-      ref={containerRef}
-      className="document-minimap"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-    >
-      <canvas ref={canvasRef} className="minimap-canvas" />
-      {/* Viewport indicator */}
+    <div className="minimap-wrapper">
+      {showUpArrow && (
+        <div className="minimap-scroll-indicator top">
+          <ChevronUp size={14} />
+        </div>
+      )}
       <div
-        className="minimap-viewport"
-        style={{
-          top: `${viewportTop}px`,
-          height: `${viewportHeight}px`,
+        ref={(el) => {
+          (scrollRef as any).current = el;
+          (containerRef as any).current = el;
         }}
-      />
+        className="document-minimap"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onScroll={updateArrows}
+      >
+        <canvas ref={canvasRef} className="minimap-canvas" />
+        <div
+          className="minimap-viewport"
+          style={{
+            top: `${viewportTop}px`,
+            height: `${viewportHeight}px`,
+          }}
+        />
+      </div>
+      {showDownArrow && (
+        <div className="minimap-scroll-indicator bottom">
+          <ChevronDown size={14} />
+        </div>
+      )}
     </div>
   );
 };

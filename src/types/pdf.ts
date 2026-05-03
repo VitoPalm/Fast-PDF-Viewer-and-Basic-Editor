@@ -33,4 +33,6 @@ export interface PdfContextType {
   selectAll: () => void;
   clearSelection: () => void;
   invertSelection: () => void;
+  rangeInput: string;
+  setRangeInput: (val: string) => void;
 }

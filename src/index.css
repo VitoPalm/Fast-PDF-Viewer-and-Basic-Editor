@@ -157,6 +157,30 @@ h1, h2, h3, h4, h5, h6 {
   overflow: hidden;
 }
 
+.sidebar-container {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+}
+
+.resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  z-index: 100;
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.resize-handle:hover, .resize-handle.active {
+  background: var(--accent-color);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
 .workspace {
   flex: 1;
   display: flex;
@@ -258,6 +282,15 @@ h1, h2, h3, h4, h5, h6 {
   flex-direction: column;
   z-index: 10;
   overflow: hidden;
+}
+
+.sidebar-scroll-container {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-scroll-container::-webkit-scrollbar {
+  display: none;
 }
 
 .sidebar-header {
@@ -597,16 +630,23 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .page-range-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 4px;
   animation: fadeIn 0.2s ease;
+  width: 100%;
+}
+
+.page-range-actions::-webkit-scrollbar {
+  display: none;
 }
 
 .page-range-action-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding: 5px 10px;
+  padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--surface-border);
   background: var(--surface-color);
@@ -617,6 +657,7 @@ h1, h2, h3, h4, h5, h6 {
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
+  width: 100%;
 }
 
 .page-range-action-btn:hover {
@@ -779,23 +820,93 @@ h1, h2, h3, h4, h5, h6 {
    DOCUMENT MINIMAP
    ================================================================ */
 
-.document-minimap {
+.minimap-wrapper {
+  display: flex;
+  flex-direction: column;
   width: 32px;
   flex-shrink: 0;
+  height: 100%;
+  position: relative;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 1px solid var(--surface-border);
+}
+
+.document-minimap {
+  flex: 1;
   position: relative;
   cursor: pointer;
-  padding: 4px 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.04);
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: none;
 }
 
 .document-minimap::-webkit-scrollbar {
   width: 0;
 }
 
-.minimap-canvas {
-  display: block;
+.minimap-scroll-indicator {
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-color);
+  background: var(--surface-color);
+  z-index: 20;
+  opacity: 0.8;
+}
+
+.minimap-scroll-indicator.top {
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.minimap-scroll-indicator.bottom {
+  border-top: 1px solid var(--surface-border);
+}
+
+/* Zoom Slider */
+.zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 0 12px;
+  border-left: 1px solid var(--surface-border);
+  border-right: 1px solid var(--surface-border);
+}
+
+.zoom-slider {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 80px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-highlight);
+  outline: none;
+  cursor: pointer;
+}
+
+.zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-color);
+  cursor: pointer;
+  box-shadow: 0 0 5px var(--accent-glow);
+  transition: transform 0.1s ease;
+}
+
+.zoom-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.zoom-label {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  width: 35px;
 }
 
 .minimap-viewport {

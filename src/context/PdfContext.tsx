@@ -10,6 +10,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [activePageId, setActivePageId] = useState<string | null>(null);
   const [selectedPageIds, setSelectedPageIds] = useState<Set<string>>(new Set());
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
+  const [rangeInput, setRangeInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const addAnnotation = useCallback((annot: TextAnnotation) => {
@@ -172,6 +173,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   return (
     <PdfContext.Provider value={{
       documents, pages, activePageId, selectedPageIds, annotations, isLoading,
+      rangeInput, setRangeInput,
       addFiles, setPages, setActivePageId, removePage, removePages, extractPages, clearAll,
       addAnnotation, updateAnnotation, removeAnnotation,
       togglePageSelection, selectPageRange, selectPagesByNumbers,

@@ -8,9 +8,9 @@ import { PageStrip } from './PageStrip';
 export const PageRangeBar: React.FC = () => {
   const {
     pages, documents, annotations,
-    selectPagesByNumbers, extractPages, removePages, clearSelection
+    selectPagesByNumbers, extractPages, removePages, clearSelection,
+    rangeInput: input, setRangeInput: setInput
   } = usePdf();
-  const [input, setInput] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showStrip, setShowStrip] = useState(false);
@@ -38,14 +38,14 @@ export const PageRangeBar: React.FC = () => {
     const ids = getPageIdsByNumbers(parsedPages);
     extractPages(ids);
     setInput('');
-  }, [parsedPages, getPageIdsByNumbers, extractPages]);
+  }, [parsedPages, getPageIdsByNumbers, extractPages, setInput]);
 
   const handleRemove = useCallback(() => {
     if (parsedPages.length === 0) return;
     const ids = getPageIdsByNumbers(parsedPages);
     removePages(ids);
     setInput('');
-  }, [parsedPages, getPageIdsByNumbers, removePages]);
+  }, [parsedPages, getPageIdsByNumbers, removePages, setInput]);
 
   const handleExportRange = useCallback(async () => {
     if (parsedPages.length === 0) return;
@@ -75,7 +75,7 @@ export const PageRangeBar: React.FC = () => {
     if (parsedPages.length === 0) return;
     selectPagesByNumbers(parsedPages);
     setInput('');
-  }, [parsedPages, selectPagesByNumbers]);
+  }, [parsedPages, selectPagesByNumbers, setInput]);
 
   const handleClear = () => {
     setInput('');
@@ -93,6 +93,24 @@ export const PageRangeBar: React.FC = () => {
     }
   };
 
+  const [placeholder, setPlaceholder] = useState('');
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const w = entry.contentRect.width;
+        if (w > 250) setPlaceholder(`Pages: e.g. 1-45, 78, 120-${totalPages}`);
+        else if (w > 180) setPlaceholder('Pages: 1-10, 15...');
+        else setPlaceholder('Pages...');
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [totalPages]);
+
   const hasInput = input.trim().length > 0;
   const hasErrors = errors.length > 0;
   const showActions = hasInput && parsedPages.length > 0;
@@ -100,13 +118,13 @@ export const PageRangeBar: React.FC = () => {
   return (
     <div className={`page-range-bar ${isFocused ? 'focused' : ''} ${hasErrors ? 'has-errors' : ''}`}>
       <div className="page-range-input-row">
-        <div className="page-range-input-wrapper">
+        <div className="page-range-input-wrapper" ref={wrapperRef}>
           <span className="page-range-icon">📖</span>
           <input
             ref={inputRef}
             type="text"
             className="page-range-input"
-            placeholder={`Pages: e.g. 1-45, 78, 120-${totalPages}`}
+            placeholder={placeholder}
             value={input}
             onChange={e => setInput(e.target.value)}
             onFocus={() => setIsFocused(true)}

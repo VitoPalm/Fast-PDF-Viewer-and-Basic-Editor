@@ -36,12 +36,6 @@ function createWindow() {
     },
     width: 1200,
     height: 800,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#0a0a0c',
-      symbolColor: '#ffffff',
-      height: 30
-    },
     backgroundColor: '#0a0a0c',
   });
 
@@ -50,9 +44,15 @@ function createWindow() {
     win?.webContents.send('main-process-message', (new Date).toLocaleString());
   });
 
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') {
+      win?.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
-    win.webContents.openDevTools();
   } else {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(process.env.DIST!, 'index.html'));
