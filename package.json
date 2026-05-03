@@ -8,10 +8,10 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && electron-builder",
+    "build": "tsc -b && vite build && electron-builder --publish never",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:build": "vite build && electron-builder",
+    "electron:build": "vite build && electron-builder --publish always",
     "electron:build:win": "vite build && electron-builder --win",
     "electron:build:mac": "vite build && electron-builder --mac",
     "electron:build:linux": "vite build && electron-builder --linux"
