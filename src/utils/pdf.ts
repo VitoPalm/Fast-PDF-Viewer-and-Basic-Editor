@@ -1,10 +1,11 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { type TextAnnotation } from '../types/pdf';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
-
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
 export interface PdfDocumentInfo {
   id: string; // Unique ID for this document upload
   file: File;
@@ -23,8 +24,13 @@ export interface PdfPageInfo {
 export const loadPdfDocument = async (file: File, docId: string): Promise<PdfDocumentInfo> => {
   const arrayBuffer = await file.arrayBuffer();
   
-  // Create a loading task
-  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+  // Create a loading task with standard fonts and cmaps
+  const loadingTask = pdfjsLib.getDocument({ 
+    data: new Uint8Array(arrayBuffer),
+    cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/standard_fonts/`
+  });
   const pdfjsDoc = await loadingTask.promise;
 
   return {
