@@ -142,8 +142,9 @@ class RenderEngine {
     if (this.processing || this.disposed) return;
     const next = this.queue[0];
     if (!next) return;
+    
     if (next.priority === 'low' && 'requestIdleCallback' in window) {
-      (window as any).requestIdleCallback(() => this.processNext(), { timeout: 200 });
+      (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback(() => this.processNext(), { timeout: 200 });
     } else {
       this.rafId = requestAnimationFrame(() => this.processNext());
     }

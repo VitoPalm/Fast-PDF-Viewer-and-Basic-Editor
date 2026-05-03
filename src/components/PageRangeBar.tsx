@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Scissors, Trash2, Download, CheckSquare, X, AlertTriangle } from 'lucide-react';
-import { usePdf } from '../context/PdfContext';
+import { usePdf } from '../hooks/usePdf';
 import { usePageRangeParser } from '../hooks/usePageRangeParser';
 import { exportModifiedPdf } from '../utils/pdf';
 import { PageStrip } from './PageStrip';
@@ -19,14 +19,11 @@ export const PageRangeBar: React.FC = () => {
 
   const { pages: parsedPages, errors, isValid } = usePageRangeParser(input, totalPages);
 
-  // Show/Hide the strip based on parsedPages
   useEffect(() => {
     if (parsedPages.length > 0) {
-      // Use requestAnimationFrame to avoid "cascading render" lint error
       const frame = requestAnimationFrame(() => setShowStrip(true));
       return () => cancelAnimationFrame(frame);
     } else {
-      // Small delay before hiding for exit animation
       const t = setTimeout(() => setShowStrip(false), 300);
       return () => clearTimeout(t);
     }
@@ -45,7 +42,7 @@ export const PageRangeBar: React.FC = () => {
 
   const handleRemove = useCallback(() => {
     if (parsedPages.length === 0) return;
-    const ids = getPageIdsByNumbers(parsedPages);
+    const ids (getPageIdsByNumbers(parsedPages);
     removePages(ids);
     setInput('');
   }, [parsedPages, getPageIdsByNumbers, removePages]);
@@ -102,7 +99,6 @@ export const PageRangeBar: React.FC = () => {
 
   return (
     <div className={`page-range-bar ${isFocused ? 'focused' : ''} ${hasErrors ? 'has-errors' : ''}`}>
-      {/* Input row */}
       <div className="page-range-input-row">
         <div className="page-range-input-wrapper">
           <span className="page-range-icon">📖</span>
@@ -124,68 +120,34 @@ export const PageRangeBar: React.FC = () => {
             </button>
           )}
         </div>
-
-        {/* Action buttons */}
         {showActions && (
           <div className="page-range-actions">
-            <button
-              className="page-range-action-btn extract"
-              onClick={handleExtract}
-              title={`Keep only these ${parsedPages.length} pages and remove the rest from the workspace`}
-            >
+            <button className="page-range-action-btn extract" onClick={handleExtract}>
               <Scissors size={14} />
               <span>Keep Only</span>
             </button>
-            <button
-              className="page-range-action-btn remove"
-              onClick={handleRemove}
-              title={`Remove these ${parsedPages.length} pages from the workspace`}
-            >
+            <button className="page-range-action-btn remove" onClick={handleRemove}>
               <Trash2 size={14} />
               <span>Remove</span>
             </button>
-            <button
-              className="page-range-action-btn export"
-              onClick={handleExportRange}
-              disabled={isExporting}
-              title={`Download these ${parsedPages.length} pages as a brand new PDF file (workspace is unaffected)`}
-            >
+            <button className="page-range-action-btn export" onClick={handleExportRange} disabled={isExporting}>
               <Download size={14} />
               <span>{isExporting ? '...' : 'Save as PDF'}</span>
             </button>
-            <button
-              className="page-range-action-btn select"
-              onClick={handleSelect}
-              title={`Select ${parsedPages.length} pages in sidebar`}
-            >
+            <button className="page-range-action-btn select" onClick={handleSelect}>
               <CheckSquare size={14} />
               <span>Select</span>
             </button>
           </div>
         )}
       </div>
-
-      {/* Status line */}
       {hasInput && (
         <div className="page-range-status">
-          {parsedPages.length > 0 && (
-            <span className="page-range-count">
-              {parsedPages.length} page{parsedPages.length !== 1 ? 's' : ''} selected
-            </span>
-          )}
-          {hasErrors && (
-            <span className="page-range-error">
-              <AlertTriangle size={12} />
-              {errors[0].reason}
-            </span>
-          )}
+          {parsedPages.length > 0 && <span className="page-range-count">{parsedPages.length} pages selected</span>}
+          {hasErrors && <span className="page-range-error"><AlertTriangle size={12} />{errors[0].reason}</span>}
         </div>
       )}
-
-      {/* Filmstrip preview */}
-      {showStrip && (
-        <PageStrip pageNumbers={parsedPages} />
-      )}
+      {showStrip && <PageStrip pageNumbers={parsedPages} />}
     </div>
   );
 };

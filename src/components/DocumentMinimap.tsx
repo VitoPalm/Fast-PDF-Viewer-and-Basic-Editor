@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { usePdf } from '../context/PdfContext';
+import { usePdf } from '../hooks/usePdf';
 
 interface DocumentMinimapProps {
   /** Height of the sidebar list area, for the viewport indicator */
@@ -64,7 +64,13 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
 
       // Rounded-ish line
       ctx.beginPath();
-      ctx.roundRect(2, y, CANVAS_WIDTH - 4, PAGE_LINE_HEIGHT, 1);
+      // @ts-expect-error - roundRect is relatively new
+      if (typeof ctx.roundRect === 'function') {
+        // @ts-expect-error - roundRect is relatively new
+        ctx.roundRect(2, y, CANVAS_WIDTH - 4, PAGE_LINE_HEIGHT, 1);
+      } else {
+        ctx.rect(2, y, CANVAS_WIDTH - 4, PAGE_LINE_HEIGHT);
+      }
       ctx.fill();
     });
   }, [pages, activePageId, selectedPageIds, totalHeight]);

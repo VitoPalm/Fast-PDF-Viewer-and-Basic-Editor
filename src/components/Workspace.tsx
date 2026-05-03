@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { usePdf } from '../context/PdfContext';
+import { usePdf } from '../hooks/usePdf';
 import { useRenderEngine } from '../hooks/useRenderEngine';
 import { v4 as uuidv4 } from 'uuid';
 import { Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -19,7 +19,6 @@ export const Workspace: React.FC = () => {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
 
-  // Page indicator input
   const [pageInputValue, setPageInputValue] = useState('');
   const [isEditingPageNum, setIsEditingPageNum] = useState(false);
   const pageInputRef = useRef<HTMLInputElement>(null);
@@ -29,59 +28,40 @@ export const Workspace: React.FC = () => {
   const docInfo = activePage ? documents[activePage.docId] : null;
   const pageAnnotations = annotations.filter(a => a.pageId === activePageId);
 
-  // Render active page via the render engine
   useEffect(() => {
     if (!activePage || !docInfo || !canvasRef.current) return;
     let cancelled = false;
-
-    // Start crossfade
     setIsTransitioning(true);
     setCanvasReady(false);
 
     const render = async () => {
       try {
-        const bitmap = await requestPage(
-          activePage.docId,
-          docInfo.pdfjsDoc,
-          activePage.originalPageIndex,
-          scale,
-          'urgent'
-        );
+        const bitmap = await requestPage(activePage.docId, docInfo.pdfjsDoc, activePage.originalPageIndex, scale, 'urgent');
         if (cancelled || !canvasRef.current) return;
-
         const canvas = canvasRef.current;
         canvas.width = bitmap.width;
         canvas.height = bitmap.height;
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.drawImage(bitmap, 0, 0);
-
         setCanvasReady(true);
-        // End crossfade after a brief moment
         requestAnimationFrame(() => {
           if (!cancelled) setIsTransitioning(false);
         });
       } catch (err) {
-        if (!cancelled) {
-          console.error('Error rendering page', err);
-          setIsTransitioning(false);
-        }
+        if (!cancelled) setIsTransitioning(false);
       }
     };
     render();
     return () => { cancelled = true; };
   }, [activePage, docInfo, scale, requestPage]);
 
-  // Navigation
   const goToPage = useCallback((index: number) => {
-    if (index >= 0 && index < pages.length) {
-      setActivePageId(pages[index].id);
-    }
+    if (index >= 0 && index < pages.length) setActivePageId(pages[index].id);
   }, [pages, setActivePageId]);
 
   const goPrev = useCallback(() => goToPage(activeIndex - 1), [goToPage, activeIndex]);
   const goNext = useCallback(() => goToPage(activeIndex + 1), [goToPage, activeIndex]);
 
-  // Keyboard navigation
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (isEditingPageNum) return;
@@ -92,7 +72,6 @@ export const Workspace: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKey);
   }, [goPrev, goNext, isEditingPageNum]);
 
-  // Page indicator editing
   const handlePageNumberClick = () => {
     setIsEditingPageNum(true);
     setPageInputValue(String(activeIndex + 1));
@@ -101,9 +80,7 @@ export const Workspace: React.FC = () => {
 
   const commitPageNumber = () => {
     const num = parseInt(pageInputValue, 10);
-    if (!isNaN(num) && num >= 1 && num <= pages.length) {
-      goToPage(num - 1);
-    }
+    if (!isNaN(num) && num >= 1 && num <= pages.length) goToPage(num - 1);
     setIsEditingPageNum(false);
   };
 
@@ -112,17 +89,13 @@ export const Workspace: React.FC = () => {
     if (e.key === 'Escape') setIsEditingPageNum(false);
   };
 
-  // Annotation click
   const handleContainerClick = (e: React.MouseEvent) => {
     if (e.target !== containerRef.current && e.target !== canvasRef.current) return;
     if (!activePageId) return;
-
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
-
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-
     const newAnnot: TextAnnotation = {
       id: uuidv4(),
       pageId: activePageId,
@@ -131,17 +104,12 @@ export const Workspace: React.FC = () => {
       fontSize: 16,
       color: '#ef4444'
     };
-
     addAnnotation(newAnnot);
     setActiveTextId(newAnnot.id);
   };
 
   if (!activePage) {
-    return (
-      <div className="workspace-content" style={{ alignItems: 'center', color: 'var(--text-secondary)' }}>
-        Select a page from the sidebar.
-      </div>
-    );
+    return <div className="workspace-content" style={{ alignItems: 'center', color: 'var(--text-secondary)' }}>Select a page from the sidebar.</div>;
   }
 
   return (
@@ -153,7 +121,6 @@ export const Workspace: React.FC = () => {
         onClick={handleContainerClick}
       >
         <canvas ref={canvasRef} style={{ display: 'block' }} />
-
         {pageAnnotations.map(annot => (
           <DraggableText
             key={annot.id}
@@ -165,17 +132,8 @@ export const Workspace: React.FC = () => {
           />
         ))}
       </div>
-
-      {/* Page indicator pill */}
       <div className="page-indicator">
-        <button
-          className="page-indicator-nav"
-          onClick={goPrev}
-          disabled={activeIndex <= 0}
-        >
-          <ChevronLeft size={16} />
-        </button>
-
+        <button className="page-indicator-nav" onClick={goPrev} disabled={activeIndex <= 0}><ChevronLeft size={16} /></button>
         {isEditingPageNum ? (
           <input
             ref={pageInputRef}
@@ -192,22 +150,12 @@ export const Workspace: React.FC = () => {
             {activeIndex + 1} <span className="page-indicator-total">/ {pages.length}</span>
           </button>
         )}
-
-        <button
-          className="page-indicator-nav"
-          onClick={goNext}
-          disabled={activeIndex >= pages.length - 1}
-        >
-          <ChevronRight size={16} />
-        </button>
+        <button className="page-indicator-nav" onClick={goNext} disabled={activeIndex >= pages.length - 1}><ChevronRight size={16} /></button>
       </div>
     </div>
   );
 };
 
-// ---------------------------------------------------------------------------
-// DraggableText (unchanged logic, cleaned up)
-// ---------------------------------------------------------------------------
 const DraggableText: React.FC<{
   annot: TextAnnotation;
   isActive: boolean;
@@ -282,22 +230,10 @@ const DraggableText: React.FC<{
           }}
         />
       ) : (
-        <span style={{
-          color: annot.color,
-          fontSize: `${annot.fontSize}px`,
-          fontWeight: 600,
-          whiteSpace: 'nowrap'
-        }}>
-          {annot.text}
-        </span>
+        <span style={{ color: annot.color, fontSize: `${annot.fontSize}px`, fontWeight: 600, whiteSpace: 'nowrap' }}>{annot.text}</span>
       )}
-
       {isActive && (
-        <button
-          className="icon-btn"
-          onClick={onRemove}
-          style={{ width: '24px', height: '24px', color: 'var(--danger-color)' }}
-        >
+        <button className="icon-btn" onClick={onRemove} style={{ width: '24px', height: '24px', color: 'var(--danger-color)' }}>
           <Trash2 size={14} />
         </button>
       )}

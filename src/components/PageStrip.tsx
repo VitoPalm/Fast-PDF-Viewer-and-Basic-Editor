@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { usePdf } from '../context/PdfContext';
+import { usePdf } from '../hooks/usePdf';
 import { useRenderEngine } from '../hooks/useRenderEngine';
 
 interface PageStripProps {
@@ -14,30 +14,32 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
   // Track which page numbers have their bitmap ready
   const [bitmaps, setBitmaps] = useState<Record<number, ImageBitmap>>({});
   
-  // Deriving visiblePages from props instead of using an effect with state
+  // Deriving visiblePages from props
   const visiblePages = useMemo(() => new Set(pageNumbers), [pageNumbers]);
 
-  // Clean up bitmaps for pages no longer in the list
+  // Handle bitmap cleanup asynchronously to avoid cascading render lint error
   useEffect(() => {
-    setBitmaps(prev => {
-      const numSet = new Set(pageNumbers);
-      const next: Record<number, ImageBitmap> = {};
-      let changed = false;
-      for (const [key, bmp] of Object.entries(prev)) {
-        if (numSet.has(Number(key))) {
-          next[Number(key)] = bmp;
-        } else {
-          changed = true;
+    const frame = requestAnimationFrame(() => {
+      setBitmaps(prev => {
+        const numSet = new Set(pageNumbers);
+        const next: Record<number, ImageBitmap> = {};
+        let changed = false;
+        for (const [key, bmp] of Object.entries(prev)) {
+          if (numSet.has(Number(key))) {
+            next[Number(key)] = bmp;
+          } else {
+            changed = true;
+          }
         }
-      }
-      return changed ? next : prev;
+        return changed ? next : prev;
+      });
     });
+    return () => cancelAnimationFrame(frame);
   }, [pageNumbers]);
 
   // Render thumbnails for visible pages
   useEffect(() => {
     let cancelled = false;
-
     const renderAll = async () => {
       for (const pageNum of pageNumbers) {
         if (cancelled) break;
@@ -54,20 +56,17 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
             setBitmaps(prev => ({ ...prev, [pageNum]: bitmap }));
           }
         } catch {
-          // Cancelled or failed, skip
+          // Skip
         }
       }
     };
-
     renderAll();
     return () => { cancelled = true; };
   }, [pageNumbers, pages, documents, requestThumbnail, bitmaps]);
 
   const handleThumbnailClick = useCallback((pageNum: number) => {
     const pageInfo = pages[pageNum - 1];
-    if (pageInfo) {
-      setActivePageId(pageInfo.id);
-    }
+    if (pageInfo) setActivePageId(pageInfo.id);
   }, [pages, setActivePageId]);
 
   if (pageNumbers.length === 0) return null;
@@ -90,7 +89,6 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
   );
 };
 
-// Individual thumbnail in the strip
 const StripThumbnail: React.FC<{
   pageNum: number;
   bitmap: ImageBitmap | undefined;
@@ -100,19 +98,15 @@ const StripThumbnail: React.FC<{
 }> = ({ pageNum, bitmap, isVisible, index, onClick }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Draw bitmap onto canvas when available
   useEffect(() => {
     if (!bitmap || !canvasRef.current) return;
     const canvas = canvasRef.current;
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
     const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(bitmap, 0, 0);
-    }
+    if (ctx) ctx.drawImage(bitmap, 0, 0);
   }, [bitmap]);
 
-  // Stagger the entrance animation
   const animDelay = Math.min(index * 20, 300);
 
   return (
@@ -124,10 +118,7 @@ const StripThumbnail: React.FC<{
     >
       <div className="page-strip-item-inner">
         {bitmap ? (
-          <canvas
-            ref={canvasRef}
-            className="page-strip-canvas"
-          />
+          <canvas ref={canvasRef} className="page-strip-canvas" />
         ) : (
           <div className="page-strip-loading">
             <div className="page-strip-loading-shimmer" />
@@ -138,3 +129,5 @@ const StripThumbnail: React.FC<{
     </div>
   );
 };
+
+export default PageStrip;

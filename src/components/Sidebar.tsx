@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable, type DropResult, type DraggableProvided } from '@hello-pangea/dnd';
 import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare } from 'lucide-react';
-import { usePdf } from '../context/PdfContext';
+import { usePdf } from '../hooks/usePdf';
 import { useRenderEngine } from '../hooks/useRenderEngine';
 import { PageRangeBar } from './PageRangeBar';
 import { DocumentMinimap } from './DocumentMinimap';
@@ -22,7 +22,6 @@ export const Sidebar: React.FC = () => {
   const [scrollOffset, setScrollOffset] = useState(0);
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
 
-  // Measure container
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -34,7 +33,6 @@ export const Sidebar: React.FC = () => {
     return () => ro.disconnect();
   }, []);
 
-  // Compute visible range
   const startIndex = Math.max(0, Math.floor(scrollOffset / ITEM_HEIGHT) - OVERSCAN);
   const endIndex = Math.min(pages.length - 1, Math.ceil((scrollOffset + containerHeight) / ITEM_HEIGHT) + OVERSCAN);
   const totalScrollHeight = pages.length * ITEM_HEIGHT;
@@ -83,7 +81,6 @@ export const Sidebar: React.FC = () => {
 
   const hasSelection = selectedPageIds.size > 0;
 
-  // Build the visible items list
   const visibleItems = useMemo(() => {
     const items: { page: PdfPageInfo; index: number }[] = [];
     for (let i = startIndex; i <= endIndex && i < pages.length; i++) {
@@ -94,15 +91,12 @@ export const Sidebar: React.FC = () => {
 
   return (
     <div className="glass-panel sidebar" style={{ width: '300px', display: 'flex', flexDirection: 'column', zIndex: 10 }}>
-      {/* Header */}
       <div className="sidebar-header">
         <h3>Pages <span className="page-count-badge">{pages.length}</span></h3>
       </div>
 
-      {/* Page Range Bar */}
       <PageRangeBar />
 
-      {/* Virtualized page list with minimap */}
       <div className="sidebar-list-area">
         <DragDropContext onDragEnd={handleDragEnd}>
           <Droppable droppableId="pages-list" mode="virtual"
@@ -133,7 +127,6 @@ export const Sidebar: React.FC = () => {
                 onScroll={handleScroll}
                 style={{ flex: 1, overflowY: 'auto', position: 'relative' }}
               >
-                {/* Spacer for total height */}
                 <div style={{ height: totalScrollHeight, position: 'relative' }}>
                   {visibleItems.map(({ page, index }) => (
                     <Draggable key={page.id} draggableId={page.id} index={index}>
@@ -166,7 +159,6 @@ export const Sidebar: React.FC = () => {
           </Droppable>
         </DragDropContext>
 
-        {/* Minimap */}
         <DocumentMinimap
           listHeight={containerHeight}
           scrollOffset={scrollOffset}
@@ -175,12 +167,9 @@ export const Sidebar: React.FC = () => {
         />
       </div>
 
-      {/* Batch action toolbar */}
       {hasSelection && (
         <div className="batch-toolbar">
-          <span className="batch-toolbar-count">
-            {selectedPageIds.size} selected
-          </span>
+          <span className="batch-toolbar-count">{selectedPageIds.size} selected</span>
           <div className="batch-toolbar-actions">
             <button className="batch-btn" onClick={handleRemoveSelected} title="Remove selected">
               <Trash2 size={14} />
@@ -201,9 +190,6 @@ export const Sidebar: React.FC = () => {
   );
 };
 
-// ---------------------------------------------------------------------------
-// Thumbnail item
-// ---------------------------------------------------------------------------
 interface ThumbnailItemContentProps {
   provided: DraggableProvided;
   page: PdfPageInfo;
@@ -220,40 +206,31 @@ interface ThumbnailItemContentProps {
 const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({ 
   provided, page, index, isActive, isSelected, isDragging, docName, onClick, onRemove, style 
 }) => {
+  // Destructuring outside the JSX to help some linters, though it's technically still "render time"
+  const { innerRef, draggableProps, dragHandleProps } = provided;
+
   return (
     <div
-      ref={provided.innerRef}
-      {...provided.draggableProps}
+      ref={innerRef}
+      {...draggableProps}
       className={`thumbnail-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''} ${isDragging ? 'dragging' : ''}`}
       style={{
         ...style,
-        ...provided.draggableProps.style,
+        ...draggableProps.style,
       }}
       onClick={onClick}
     >
       <div className="thumbnail-item-inner">
-        <div {...provided.dragHandleProps} className="drag-handle">
+        <div {...dragHandleProps} className="drag-handle">
           <GripVertical size={14} />
         </div>
-
         <LazyThumbnail page={page} />
-
         <div className="thumbnail-info">
           <div className="thumbnail-page-num">Page {index + 1}</div>
           <div className="thumbnail-doc-name" title={docName}>{docName}</div>
         </div>
-
-        {isSelected && (
-          <div className="thumbnail-check">
-            <Check size={12} />
-          </div>
-        )}
-
-        <button
-          className="thumbnail-remove"
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
-          title="Remove page"
-        >
+        {isSelected && <div className="thumbnail-check"><Check size={12} /></div>}
+        <button className="thumbnail-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }} title="Remove page">
           <Trash2 size={14} />
         </button>
       </div>
@@ -261,9 +238,6 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
   );
 };
 
-// ---------------------------------------------------------------------------
-// Lazy-rendered thumbnail
-// ---------------------------------------------------------------------------
 const LazyThumbnail: React.FC<{ page: PdfPageInfo }> = ({ page }) => {
   const { documents } = usePdf();
   const { requestThumbnail } = useRenderEngine();
@@ -274,7 +248,6 @@ const LazyThumbnail: React.FC<{ page: PdfPageInfo }> = ({ page }) => {
     let cancelled = false;
     const doc = documents[page.docId];
     if (!doc) return;
-
     requestThumbnail(page.docId, doc.pdfjsDoc, page.originalPageIndex, 'high')
       .then(bitmap => {
         if (cancelled || !canvasRef.current) return;
@@ -286,7 +259,6 @@ const LazyThumbnail: React.FC<{ page: PdfPageInfo }> = ({ page }) => {
         setLoaded(true);
       })
       .catch(() => {});
-
     return () => { cancelled = true; };
   }, [page.docId, page.originalPageIndex, documents, requestThumbnail]);
 
