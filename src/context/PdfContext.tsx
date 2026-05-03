@@ -1,9 +1,8 @@
-import React, { createContext, useState, useCallback, type ReactNode } from 'react';
+import React, { useState, useCallback, type ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument } from '../utils/pdf';
-import { type TextAnnotation, type PdfContextType } from '../types/pdf';
-
-export const PdfContext = createContext<PdfContextType | undefined>(undefined);
+import { type TextAnnotation } from '../types/pdf';
+import { PdfContext } from './PdfContextDef';
 
 export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [documents, setDocuments] = useState<Record<string, PdfDocumentInfo>>({});

@@ -47,7 +47,7 @@ export const Workspace: React.FC = () => {
         requestAnimationFrame(() => {
           if (!cancelled) setIsTransitioning(false);
         });
-      } catch (err) {
+      } catch {
         if (!cancelled) setIsTransitioning(false);
       }
     };

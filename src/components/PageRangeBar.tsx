@@ -42,7 +42,7 @@ export const PageRangeBar: React.FC = () => {
 
   const handleRemove = useCallback(() => {
     if (parsedPages.length === 0) return;
-    const ids (getPageIdsByNumbers(parsedPages);
+    const ids = getPageIdsByNumbers(parsedPages);
     removePages(ids);
     setInput('');
   }, [parsedPages, getPageIdsByNumbers, removePages]);
