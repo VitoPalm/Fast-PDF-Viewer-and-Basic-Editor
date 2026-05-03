@@ -1,57 +1,91 @@
 # 🖋️ Antigravity PDF
 
-A premium, high-performance web-based PDF editor built with React, Vite, and PDF.js. Designed with a sleek glassmorphism aesthetic and optimized for handling massive documents with ease.
+### The High-Performance Desktop PDF Powerhouse
 
-![PDF Editor Preview](https://raw.githubusercontent.com/VitoPalm/Fast-PDF-Viewer-and-Basic-Editor/main/src/assets/hero.png)
+Antigravity PDF is a premium, professional-grade PDF viewer and editor designed for speed, beauty, and massive documents. Built with **Electron**, **React**, and a custom-engineered rendering pipeline, it brings a buttery-smooth web experience to the desktop.
+
+> [!TIP]
+> **Looking for a ready-to-use version?** You can download the latest pre-built binaries for Windows, macOS, and Linux from the [GitHub Releases](https://github.com/VitoPalm/Fast-PDF-Viewer-and-Basic-Editor/releases) page.
+
+![Antigravity PDF Mockup](https://raw.githubusercontent.com/VitoPalm/Fast-PDF-Viewer-and-Basic-Editor/main/src/assets/hero.png)
 
 ## ✨ Key Features
 
-- **🚀 High-Performance Rendering**: Leveraging Web Workers and a custom LRU bitmap cache for buttery-smooth scrolling, even with 600+ page documents.
-- **🛠️ Advanced Manipulation**: Merge multiple PDFs, split documents, extract specific chapters, and reorder pages with simple drag-and-drop or batch actions.
-- **🔍 Document Minimap**: A visual overview of your entire document for rapid navigation.
-- **🎞️ Animated Filmstrip**: Interactive page previews with multi-select support and batch operations.
-- **⚡ Page Range Engine**: A powerful command-driven system to perform complex operations on specific page ranges (e.g., `1-5, 12, 50-end`).
-- **🎨 Premium UI**: Modern glassmorphism design system using vanilla CSS for maximum performance and a professional look.
+- **🚀 Pro-Grade Rendering Engine**: Leverages a multi-threaded rendering pipeline using `ImageBitmap` and `requestIdleCallback` to ensure the UI remains responsive even when processing complex pages.
+- **🧠 Dual-Layer LRU Cache**: Intelligent memory management with separate caches for high-speed thumbnail browsing (250+ pages) and high-resolution viewports.
+- **🎨 Glassmorphism Design**: A stunning, modern interface built with vanilla CSS, featuring vibrant gradients, subtle blurs, and micro-animations.
+- **⚡ Page Range Engine**: Perform complex batch operations (Delete, Extract, Reorder) using a powerful command syntax (e.g., `1-5, 12, 50-end`).
+- **🎞️ Interactive Filmstrip**: A virtualized sidebar for rapid navigation and multi-select page manipulation.
+- **🛠️ Advanced Editing**: Add text annotations, merge multiple documents, and reorder pages with intuitive drag-and-drop.
+
+## 🏗️ Technical Architecture
+
+Antigravity PDF is built on a modern, decoupled architecture designed for performance:
+
+- **Electron (Main Process)**: Handles native window management, file system access, and system-level integrations.
+- **React (Renderer Process)**: Powering a highly reactive UI with a custom state management system for PDF metadata.
+- **PDF.js Core**: Utilized for low-level document parsing and page rendering via Web Workers.
+- **PDF-Lib**: Orchestrates complex document mutations (splitting, merging, saving) with high fidelity.
+
+### The Rendering Pipeline
+1. **Request Queue**: Pages are requested with different priorities (`urgent` for the current view, `low` for preloading).
+2. **Worker Rendering**: PDF.js renders the page to a background canvas.
+3. **Bitmap Conversion**: The canvas is converted to an `ImageBitmap` to minimize main-thread transfer costs.
+4. **LRU Eviction**: Off-screen bitmaps are automatically evicted from memory based on usage patterns to prevent memory leaks.
 
 ## 🛠️ Tech Stack
 
-- **Framework**: [React 18](https://reactjs.org/)
-- **Build Tool**: [Vite](https://vitejs.dev/)
+- **Runtime**: [Electron](https://www.electronjs.org/)
+- **Frontend**: [React 19](https://reactjs.org/) & [Vite](https://vitejs.dev/)
 - **PDF Logic**: [PDF.js](https://mozilla.github.io/pdf.js/) & [pdf-lib](https://pdf-lib.js.org/)
-- **Icons**: [Lucide React](https://lucide.dev/)
 - **Styling**: Vanilla CSS (Custom Design System)
+- **Icons**: [Lucide React](https://lucide.dev/)
+- **D&D**: [@hello-pangea/dnd](https://github.com/hello-pangea/dnd)
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-
 - Node.js (v18 or higher)
 - npm or yarn
 
 ### Installation
-
 1. Clone the repository:
    ```bash
    git clone https://github.com/VitoPalm/Fast-PDF-Viewer-and-Basic-Editor.git
    cd Fast-PDF-Viewer-and-Basic-Editor
    ```
-
 2. Install dependencies:
    ```bash
    npm install
    ```
-
-3. Start the development server:
+3. Start the development environment:
    ```bash
    npm run dev
    ```
 
-## 📖 How to Use
+## 📦 Build & Distribution
 
-1. **Upload**: Drag and drop your PDF files into the main workspace.
-2. **Organize**: Use the sidebar to reorder pages or select specific pages for batch actions.
-3. **Edit**: Use the Page Range bar to quickly isolate or manipulate sections of the document.
-4. **Export**: Click the "Export PDF" button to download your modified document.
+Antigravity PDF is ready for cross-platform distribution. You can find pre-built binaries on the [Releases](https://github.com/VitoPalm/Fast-PDF-Viewer-and-Basic-Editor/releases) page, or generate your own installers using the following commands:
+
+- **Windows**: `npm run electron:build:win`
+- **macOS**: `npm run electron:build:mac`
+- **Linux**: `npm run electron:build:linux`
+
+Artifacts will be generated in the `release/` directory.
+
+## 📂 Project Structure
+
+```text
+├── electron/          # Main process and preload scripts
+├── src/
+│   ├── components/    # Reusable UI components (Workspace, Sidebar, etc.)
+│   ├── hooks/         # Core logic (Rendering Engine, Page Range Parser)
+│   ├── utils/         # PDF manipulation and helper functions
+│   ├── types/         # TypeScript definitions
+│   └── assets/        # Global styles and static assets
+├── public/            # Static assets and worker scripts
+└── vite.config.ts     # Build configuration
+```
 
 ## 📄 License
 
