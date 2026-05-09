@@ -45,6 +45,10 @@
     "vite-plugin-electron": "^0.29.0",
     "vite-plugin-electron-renderer": "^0.14.6"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VitoPalm/Fast-PDF-Viewer-and-Basic-Editor.git"
+  },
   "build": {
     "appId": "com.vitopalmieri.fastpdf",
     "productName": "Antigravity PDF",
