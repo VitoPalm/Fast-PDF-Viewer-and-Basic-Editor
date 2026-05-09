@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { UploadCloud, FileText } from 'lucide-react';
 import clsx from 'clsx';
+import './UploadScreen.css';
 
 interface UploadScreenProps {
   onUpload: (files: File[]) => void;

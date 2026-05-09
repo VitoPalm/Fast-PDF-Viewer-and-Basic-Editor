@@ -1,11 +1,12 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument, rgb } from 'pdf-lib';
-import { type TextAnnotation } from '../types/pdf';
+import { type TextAnnotation } from '../../shared/types/pdf';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url
 ).toString();
+
 export interface PdfDocumentInfo {
   id: string; // Unique ID for this document upload
   file: File;
@@ -40,51 +41,6 @@ export const loadPdfDocument = async (file: File, docId: string): Promise<PdfDoc
     pdfjsDoc,
     pageCount: pdfjsDoc.numPages
   };
-};
-
-export const renderPageToCanvas = async (
-  pdfjsDoc: pdfjsLib.PDFDocumentProxy, 
-  pageNumber: number, 
-  canvas: HTMLCanvasElement, 
-  scale: number = 1.0
-) => {
-  const page = await pdfjsDoc.getPage(pageNumber);
-  
-  const viewport = page.getViewport({ scale });
-  
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  
-  const renderContext = {
-    canvasContext: canvas.getContext('2d')!,
-    canvas,
-    viewport: viewport
-  };
-  
-  await page.render(renderContext).promise;
-  return { width: viewport.width, height: viewport.height };
-};
-
-export const renderPageToDataUrl = async (
-  pdfjsDoc: pdfjsLib.PDFDocumentProxy, 
-  pageNumber: number, 
-  scale: number = 0.2
-): Promise<string> => {
-  const page = await pdfjsDoc.getPage(pageNumber);
-  const viewport = page.getViewport({ scale });
-  
-  const canvas = document.createElement('canvas');
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  
-  const renderContext = {
-    canvasContext: canvas.getContext('2d')!,
-    canvas,
-    viewport: viewport
-  };
-  
-  await page.render(renderContext).promise;
-  return canvas.toDataURL();
 };
 
 export const exportModifiedPdf = async (

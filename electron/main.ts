@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Linux Wayland Fixes
+// Linux GPU/Wayland Stability Fixes
 if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('ozone-platform-hint', 'wayland');
-  app.commandLine.appendSwitch('disable-features', 'WaylandFractionalScaleV1');
-  app.commandLine.appendSwitch('force-device-scale-factor', '1');
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+  app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform');
+  app.commandLine.appendSwitch('disable-gpu-memory-buffer-video-frames');
 }
 
 // The built directory structure

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { usePdf } from '../hooks/usePdf';
-import { useRenderEngine } from '../hooks/useRenderEngine';
+import { usePdf } from '../../shared/hooks/usePdf';
+import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 
 interface PageStripProps {
   pageNumbers: number[];

@@ -1,8 +1,8 @@
-import { UploadScreen } from './components/UploadScreen';
-import { Sidebar } from './components/Sidebar';
-import { Workspace } from './components/Workspace';
+import { UploadScreen } from './features/upload/UploadScreen';
+import { Sidebar } from './features/sidebar/Sidebar';
+import { Workspace } from './features/workspace/Workspace';
 import { PdfProvider } from './context/PdfContext';
-import { usePdf } from './hooks/usePdf';
+import { usePdf } from './shared/hooks/usePdf';
 import './index.css';
 
 const AppContent = () => {

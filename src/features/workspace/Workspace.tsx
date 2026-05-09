@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { usePdf } from '../hooks/usePdf';
-import { useRenderEngine } from '../hooks/useRenderEngine';
+import { usePdf } from '../../shared/hooks/usePdf';
+import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 import { Trash2, ChevronLeft, ChevronRight, Plus, Download } from 'lucide-react';
-import { type TextAnnotation } from '../types/pdf';
-import { exportModifiedPdf } from '../utils/pdf';
+import { type TextAnnotation } from '../../shared/types/pdf';
+import { exportModifiedPdf } from '../pdf-engine/utils';
+import './Workspace.css';
 
 export const Workspace: React.FC = () => {
   const {

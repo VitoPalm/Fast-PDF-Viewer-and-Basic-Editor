@@ -1,4 +1,5 @@
-import { type PdfDocumentInfo, type PdfPageInfo } from '../utils/pdf';
+import React from 'react';
+import { type PdfDocumentInfo, type PdfPageInfo } from '../../features/pdf-engine/utils';
 
 export interface TextAnnotation {
   id: string;

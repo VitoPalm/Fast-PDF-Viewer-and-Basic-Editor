@@ -78,11 +78,11 @@ Artifacts will be generated in the `release/` directory.
 ```text
 ├── electron/          # Main process and preload scripts
 ├── src/
-│   ├── components/    # Reusable UI components (Workspace, Sidebar, etc.)
-│   ├── hooks/         # Core logic (Rendering Engine, Page Range Parser)
-│   ├── utils/         # PDF manipulation and helper functions
-│   ├── types/         # TypeScript definitions
-│   └── assets/        # Global styles and static assets
+│   ├── features/      # Feature-specific modules (Workspace, Sidebar, PDF Engine)
+│   ├── shared/        # Shared hooks, utils, and global types
+│   ├── context/       # Global state management
+│   ├── styles/        # Global styles and design system tokens
+│   └── assets/        # Static assets (images)
 ├── public/            # Static assets and worker scripts
 └── vite.config.ts     # Build configuration
 ```

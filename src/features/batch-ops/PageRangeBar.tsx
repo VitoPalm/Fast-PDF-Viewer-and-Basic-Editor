@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Scissors, Trash2, Download, CheckSquare, X, AlertTriangle } from 'lucide-react';
-import { usePdf } from '../hooks/usePdf';
-import { usePageRangeParser } from '../hooks/usePageRangeParser';
-import { exportModifiedPdf } from '../utils/pdf';
+import { usePdf } from '../../shared/hooks/usePdf';
+import { usePageRangeParser } from './usePageRangeParser';
+import { exportModifiedPdf } from '../pdf-engine/utils';
 import { PageStrip } from './PageStrip';
+import './BatchOps.css';
 
 export const PageRangeBar: React.FC = () => {
   const {

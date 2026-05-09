@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { usePdf } from '../hooks/usePdf';
+import { usePdf } from '../../shared/hooks/usePdf';
 import { ChevronUp, ChevronDown } from 'lucide-react';
+import './Minimap.css';
 
 interface DocumentMinimapProps {
   /** Height of the sidebar list area, for the viewport indicator */

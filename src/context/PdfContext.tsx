@@ -1,7 +1,7 @@
 import React, { useState, useCallback, type ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument } from '../utils/pdf';
-import { type TextAnnotation } from '../types/pdf';
+import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument } from '../features/pdf-engine/utils';
+import { type TextAnnotation } from '../shared/types/pdf';
 import { PdfContext } from './PdfContextDef';
 
 export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => {

@@ -36,12 +36,12 @@ The project follows a modular architecture, separating concerns between the Elec
 .
 ├── electron/               # Electron main and preload scripts
 ├── src/
-│   ├── components/         # Modular React components
+│   ├── features/           # Feature-based modules (Sidebar, Workspace, PDF Engine)
+│   ├── shared/             # Reusable hooks, types, and utils
 │   ├── context/            # Global state management (PdfContext)
-│   ├── hooks/              # Custom React hooks (Zoom, Pan, etc.)
-│   ├── types/              # TypeScript interfaces and types
-│   ├── utils/              # PDF engine and helper functions
-│   └── index.css           # Global design system and utilities
+│   ├── styles/             # Modular design system and CSS tokens
+│   ├── index.css           # Global entry for styles
+│   └── main.tsx            # Application entry point
 ├── vite.config.ts          # Build configuration
 └── package.json            # Dependencies and scripts
 ```
@@ -49,8 +49,8 @@ The project follows a modular architecture, separating concerns between the Elec
 ### Modular Breakdown
 - **`electron/`**: Handles window management and native OS integration.
 - **`src/context/`**: The "Brain" of the app. Manages the state of loaded documents, page order, and selections.
-- **`src/utils/pdf.ts`**: The "Engine". Abstracts complexity of PDF.js and pdf-lib into simple async functions.
-- **`src/components/`**: The "Face". Independent UI units like `Workspace`, `Sidebar`, and `Minimap`.
+- **`src/features/pdf-engine/`**: The "Engine". Abstracts complexity of PDF.js and pdf-lib into simple async functions.
+- **`src/features/sidebar/`**, **`src/features/workspace/`**: The "Face". Independent feature units with their own components and styles.
 
 ---
 
@@ -119,10 +119,9 @@ Unlike traditional editors that treat a PDF as a single monolithic entity, Antig
 
 ## 6. Code Analysis & Structural Health
 
-### Unused Code Analysis
-During the project's evolution from a simple viewer to a high-performance editor, several legacy functions were superseded:
-- **`utils/pdf.ts:renderPageToCanvas`**: Superseded by `useRenderEngine.requestPage`. The new engine uses an async priority queue and `ImageBitmap` for better main-thread performance.
-- **`utils/pdf.ts:renderPageToDataUrl`**: Superseded by `useRenderEngine.requestThumbnail`. The new approach leverages a specialized thumbnail LRU cache (250 items) instead of expensive DataURL strings.
+During the project's evolution, several legacy functions were identified and **removed** in the recent restructuring to ensure a clean codebase:
+- **`renderPageToCanvas`**: Removed. Superseded by the async priority queue in `useRenderEngine`.
+- **`renderPageToDataUrl`**: Removed. Superseded by the thumbnail LRU cache (250 items).
 
 ### Structural Dependency Review
 The project maintains a unidirectional data flow, but some components exhibit high complexity:
@@ -133,8 +132,8 @@ The project maintains a unidirectional data flow, but some components exhibit hi
     - **`useRenderEngine.ts`**: Implements a custom scheduler to manage PDF.js rendering tasks. While robust, it introduces significant non-React logic into the hook layer.
 - **Dependency Tree**:
     - `App` -> `PdfProvider` -> `Sidebar` / `Workspace`.
-    - Components -> `usePdf` / `useRenderEngine` -> `PdfContext`.
-    - `PdfContext` -> `pdf.ts` (Engine) -> `pdfjs-dist` / `pdf-lib`.
+    - Components -> `usePdf` (shared) / `useRenderEngine` (pdf-engine) -> `PdfContext`.
+    - `PdfContext` -> `pdf-engine/utils.ts` -> `pdfjs-dist` / `pdf-lib`.
 
 ---
 
@@ -167,7 +166,7 @@ $$y' = Height_{PDF} - \frac{y}{scale} - \frac{FontSize_{scaled}}{scale}$$
 
 ---
 
-## 7. Future Roadmap
+## 9. Future Roadmap
 - [ ] **Advanced Annotations**: Support for shapes, highlights, and images.
 - [ ] **OCR Integration**: Text recognition for scanned documents.
 - [ ] **Cloud Sync**: Optional integration with cloud storage providers.
