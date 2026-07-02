@@ -1,6 +1,13 @@
 import React, { useState, useCallback, type ReactNode, useEffect, useRef, useReducer } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument, analyzePage, diagnoseGlyphText } from '../features/pdf-engine/utils';
+import {
+  type PdfDocumentInfo,
+  type PdfPageInfo,
+  loadPdfDocument,
+  analyzePage,
+  diagnoseGlyphText,
+  repairGlyphText,
+} from '../features/pdf-engine/utils';
 import { type PageMutationConfirmOptions, type TextAnnotation } from '../shared/types/pdf';
 import { OCRService } from '../features/pdf-engine/ocrService';
 import { detectLanguage } from '../features/pdf-engine/languageDetector';
@@ -106,7 +113,8 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const pausedUndoRemainingMsRef = useRef<number | null>(null);
   const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
 
-  const isLoading = isImportJobBusy(importJob) || isOcrJobBusy(ocrJob) || isGlyphJobBusy(glyphJob);
+  const isGlyphRepairRunning = pages.some(page => page.glyphRepairStatus === 'running');
+  const isLoading = isImportJobBusy(importJob) || isOcrJobBusy(ocrJob) || isGlyphJobBusy(glyphJob) || isGlyphRepairRunning;
 
   useEffect(() => {
     // Pre-initialize OCR engine in the background
@@ -586,6 +594,9 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       glyphDiagnosticsStatus: currentPage.glyphDiagnosticsStatus ?? snapshotPage.glyphDiagnosticsStatus,
       glyphDiagnosticsError: currentPage.glyphDiagnosticsError,
       glyphDiagnostics: currentPage.glyphDiagnostics ?? snapshotPage.glyphDiagnostics,
+      glyphRepairStatus: currentPage.glyphRepairStatus ?? snapshotPage.glyphRepairStatus,
+      glyphRepairError: currentPage.glyphRepairError,
+      glyphRepairReport: currentPage.glyphRepairReport ?? snapshotPage.glyphRepairReport,
     };
   }, []);
 
@@ -604,6 +615,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       glyphDiagnosticsError: page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running'
         ? 'Glyph diagnostics were cancelled before undo restored this page.'
         : page.glyphDiagnosticsError,
+      glyphRepairStatus: page.glyphRepairStatus === 'running' ? 'skipped' : page.glyphRepairStatus,
+      glyphRepairError: page.glyphRepairStatus === 'running'
+        ? 'Glyph repair finished after undo restored this page.'
+        : page.glyphRepairError,
     }))
   ), []);
 
@@ -864,6 +879,89 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [analyzeImportedPages, getErrorMessage, isImportJobCurrent]);
 
+  const repairGlyphTextPage = useCallback(async (pageId: string) => {
+    const pageInfo = pagesRef.current.find(page => page.id === pageId);
+    if (!pageInfo || pageInfo.glyphRepairStatus === 'running') return;
+
+    const docInfo = documentsRef.current[pageInfo.docId];
+    if (!docInfo) {
+      setPages(prev => prev.map(page => page.id === pageId ? {
+        ...page,
+        glyphRepairStatus: 'failed',
+        glyphRepairError: `Missing PDF document for page ${pageInfo.originalPageIndex}`,
+      } : page));
+      return;
+    }
+
+    const originalDocId = pageInfo.docId;
+    const originalPageIndex = pageInfo.originalPageIndex;
+    const isOriginalPageStillCurrent = () => pagesRef.current.some(page => (
+      page.id === pageId &&
+      page.docId === originalDocId &&
+      page.originalPageIndex === originalPageIndex
+    ));
+
+    setPages(prev => prev.map(page => page.id === pageId ? {
+      ...page,
+      glyphRepairStatus: 'running',
+      glyphRepairError: undefined,
+    } : page));
+
+    try {
+      const { blob, report } = await repairGlyphText(docInfo, [originalPageIndex]);
+      if (!isOriginalPageStillCurrent()) return;
+
+      if (report.fontsRepaired === 0) {
+        setPages(prev => prev.map(page => page.id === pageId ? {
+          ...page,
+          glyphRepairStatus: 'skipped',
+          glyphRepairError: report.protectedDocument
+            ? 'This PDF is encrypted or signed, so text repair was skipped.'
+            : 'No deterministic glyph repair was available for this page.',
+          glyphRepairReport: report,
+          glyphDiagnostics: report.afterDiagnostics,
+          glyphDiagnosticsStatus: 'complete',
+          glyphDiagnosticsError: undefined,
+        } : page));
+        return;
+      }
+
+      const docId = uuidv4();
+      const file = new File([blob], 'repaired_text.pdf', { type: 'application/pdf' });
+      const repairedDocInfo = await loadPdfDocument(file, docId);
+      const repairedPage = await repairedDocInfo.pdfjsDoc.getPage(originalPageIndex);
+      const analysis = await analyzePage(repairedPage);
+      if (!isOriginalPageStillCurrent()) return;
+
+      setDocuments(prev => ({ ...prev, [docId]: repairedDocInfo }));
+      setPages(prev => prev.map(page => page.id === pageId ? {
+        ...page,
+        docId,
+        originalPageIndex,
+        analysis,
+        analysisStatus: 'complete',
+        analysisError: undefined,
+        ocrStatus: 'idle',
+        ocrError: undefined,
+        ocrResult: undefined,
+        glyphDiagnosticsStatus: 'complete',
+        glyphDiagnosticsError: undefined,
+        glyphDiagnostics: report.afterDiagnostics,
+        glyphRepairStatus: 'complete',
+        glyphRepairError: undefined,
+        glyphRepairReport: report,
+      } : page));
+    } catch (err) {
+      if (!isOriginalPageStillCurrent()) return;
+
+      setPages(prev => prev.map(page => page.id === pageId ? {
+        ...page,
+        glyphRepairStatus: 'failed',
+        glyphRepairError: getErrorMessage(err),
+      } : page));
+    }
+  }, [getErrorMessage]);
+
   const replacePage = useCallback(async (pageId: string, newBlob: Blob) => {
     try {
       const docId = uuidv4();
@@ -883,6 +981,12 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ocrStatus: 'idle',
         ocrError: undefined,
         ocrResult: undefined,
+        glyphDiagnosticsStatus: 'idle',
+        glyphDiagnosticsError: undefined,
+        glyphDiagnostics: undefined,
+        glyphRepairStatus: 'idle',
+        glyphRepairError: undefined,
+        glyphRepairReport: undefined,
       } : p));
     } catch (err) {
       console.error("Error replacing page", err);
@@ -1158,7 +1262,8 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     <PdfContext.Provider value={{
       documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob, ocrJob, glyphJob,
       rangeInput, setRangeInput,
-      addFiles, cancelImport, startGlyphDiagnostics, cancelGlyphDiagnostics, startOcr, cancelOcr, retryFailedOcr,
+      addFiles, cancelImport, startGlyphDiagnostics, cancelGlyphDiagnostics, repairGlyphTextPage,
+      startOcr, cancelOcr, retryFailedOcr,
       setPages, setActivePageId, replacePage, removePage, removePages, extractPages, clearAll,
       removePageWithUndo, removePagesWithUndo, keepOnlyPagesWithUndo, clearAllWithUndo,
       reorderPage, reorderSelectedPages,

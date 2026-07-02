@@ -14,8 +14,8 @@ pages.
 - pdf-lib for page copying/export.
 - Tesseract.js for OCR.
 - GhostPDL/Ghostscript WASM path for the current Clean OCR flow.
-- Apache PDFBox/FontBox Java sidecar for glyph text diagnostics and future
-  `/ToUnicode` repair.
+- Apache PDFBox/FontBox Java sidecar for glyph text diagnostics and
+  deterministic `/ToUnicode` repair.
 - GitHub Actions plus electron-builder for CI/release packaging.
 
 ## Primary Source Areas
@@ -46,6 +46,8 @@ pages.
 - Clean OCR through the Electron native bridge when running in the packaged or
   Electron app.
 - Diagnose suspect glyph mappings on pages with broken selectable text.
+- Repair deterministic glyph mappings by adding `/ToUnicode` maps while
+  preserving vector artwork.
 
 ## Architectural Observations
 
@@ -62,9 +64,9 @@ pages.
   and batch flows.
 - Page analysis now includes text-layer health so suspect native text can be
   routed away from blind DOM text rendering before glyph repair exists.
-- Glyph text diagnostics now run through a separate PDFBox sidecar, not the OCR
-  overlay path. Future mutation should repair text mapping metadata, preferably
-  `/ToUnicode`, while preserving vector rendering.
+- Glyph text diagnostics and deterministic repair now run through a separate
+  PDFBox sidecar, not the OCR overlay path. Ambiguous mappings still route to
+  OCR-assisted future work instead of being mutated blindly.
 
 ## Current Build And Release Shape
 
@@ -80,11 +82,11 @@ pages.
 
 ## Immediate Engineering Priorities
 
-1. Treat 1.6.0 as the first glyph diagnostics baseline.
-2. Add deterministic `/ToUnicode` mutation only after diagnostics and fixture
-   coverage are stable.
-3. Decide whether fit-to-width/default zoom polish should land before glyph
-   mutation.
-4. Bundle or locate a Java runtime for packaged glyph diagnostics.
+1. Treat 1.7.0 as the first deterministic glyph repair baseline.
+2. Add stronger synthetic fixtures for missing, wrong, Type0, ligature, and
+   ambiguous `/ToUnicode` cases.
+3. Design OCR-assisted glyph mapping for pages that cannot be repaired from
+   font metadata alone.
+4. Bundle or locate a Java runtime for packaged glyph diagnostics and repair.
 5. Resolve release, licensing, and bundled asset strategy before public binary
    distribution.

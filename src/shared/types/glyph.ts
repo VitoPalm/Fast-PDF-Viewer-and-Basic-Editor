@@ -1,4 +1,5 @@
 export type GlyphDiagnosticsStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed' | 'skipped';
+export type GlyphRepairStatus = 'idle' | 'running' | 'complete' | 'failed' | 'skipped';
 
 export interface GlyphSample {
   code: number;
@@ -64,4 +65,44 @@ export interface GlyphDiagnosticsReport {
   unmappedGlyphs: number;
   deterministicCandidateFonts: number;
   pages: GlyphPageReport[];
+}
+
+export interface GlyphRepairFontResult {
+  resourceName: string;
+  font: GlyphFontMetadata;
+  status: 'repaired' | 'skipped';
+  reason: string;
+  message: string;
+  pages: number[];
+  glyphEvents: number;
+  observedCodes: number;
+  mappedCodes: number;
+  unmappedCodes: number;
+  mappingsAdded: number;
+  sourceCodeBytes: number;
+  unmappedCodeHex: string[];
+}
+
+export interface GlyphRepairValidation {
+  reloaded: boolean;
+  visualPagesCompared: number;
+  maxChangedPixelRatio: number;
+  maxChannelDelta: number;
+  beforeTextLength: number;
+  afterTextLength: number;
+  extractionChangedPages: number;
+}
+
+export interface GlyphRepairReport {
+  pageCount: number;
+  encrypted: boolean;
+  signatureCount: number;
+  pagesAnalyzed: number;
+  fontsConsidered: number;
+  fontsRepaired: number;
+  mappingsAdded: number;
+  protectedDocument: boolean;
+  validation: GlyphRepairValidation;
+  afterDiagnostics: GlyphDiagnosticsReport;
+  fonts: GlyphRepairFontResult[];
 }

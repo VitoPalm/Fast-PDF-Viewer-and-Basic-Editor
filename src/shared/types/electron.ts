@@ -1,4 +1,4 @@
-import { type GlyphDiagnosticsReport } from './glyph';
+import { type GlyphDiagnosticsReport, type GlyphRepairReport } from './glyph';
 
 export type CleanOcrErrorCode =
   | 'invalid-input'
@@ -12,6 +12,8 @@ export type GlyphDiagnosticsErrorCode =
   | 'sidecar-unavailable'
   | 'sidecar-failed'
   | 'parse-failed';
+
+export type GlyphRepairErrorCode = GlyphDiagnosticsErrorCode;
 
 export interface CleanOcrInput {
   pdfBytes: Uint8Array;
@@ -27,13 +29,20 @@ export interface GlyphDiagnosticsInput {
   pageNumbers: number[];
 }
 
+export type GlyphRepairInput = GlyphDiagnosticsInput;
+
 export type GlyphDiagnosticsResult =
   | { ok: true; report: GlyphDiagnosticsReport }
   | { ok: false; error: { code: GlyphDiagnosticsErrorCode; message: string } };
 
+export type GlyphRepairResult =
+  | { ok: true; pdfBytes: Uint8Array; report: GlyphRepairReport }
+  | { ok: false; error: { code: GlyphRepairErrorCode; message: string } };
+
 export interface AntigravityPdfBridge {
   cleanOcrPage(input: CleanOcrInput): Promise<CleanOcrResult>;
   diagnoseGlyphText(input: GlyphDiagnosticsInput): Promise<GlyphDiagnosticsResult>;
+  repairGlyphText(input: GlyphRepairInput): Promise<GlyphRepairResult>;
 }
 
 declare global {

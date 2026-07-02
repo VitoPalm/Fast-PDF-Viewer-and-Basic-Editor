@@ -423,6 +423,14 @@
   flex-wrap: wrap;
 }
 
+.text-health-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
 .text-health-banner-action {
   font-size: 0.7rem;
   padding: 4px 8px;

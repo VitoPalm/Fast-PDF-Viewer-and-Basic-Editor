@@ -11,6 +11,8 @@ import {
   type CleanOcrResult,
   type GlyphDiagnosticsErrorCode,
   type GlyphDiagnosticsResult,
+  type GlyphRepairErrorCode,
+  type GlyphRepairResult,
 } from '../src/shared/types/electron';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +81,14 @@ const glyphDiagnosticsFailure = (
   code: GlyphDiagnosticsErrorCode,
   message: string,
 ): GlyphDiagnosticsResult => ({
+  ok: false,
+  error: { code, message },
+});
+
+const glyphRepairFailure = (
+  code: GlyphRepairErrorCode,
+  message: string,
+): GlyphRepairResult => ({
   ok: false,
   error: { code, message },
 });
@@ -252,6 +262,81 @@ ipcMain.handle('diagnose-glyph-text', async (_event, input: unknown): Promise<Gl
     }
   } catch (err) {
     return glyphDiagnosticsFailure('sidecar-failed', `Glyph diagnostics failed: ${errorMessage(err)}`);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+ipcMain.handle('repair-glyph-text', async (_event, input: unknown): Promise<GlyphRepairResult> => {
+  const validInput = validateGlyphDiagnosticsInput(input);
+  if ('ok' in validInput) {
+    return glyphRepairFailure(validInput.error.code, validInput.error.message);
+  }
+
+  if (!hasPdfHeader(validInput.pdfBytes)) {
+    return glyphRepairFailure('invalid-input', 'Glyph repair requires a valid PDF payload.');
+  }
+
+  const glyphRepairJarPath = getGlyphRepairJarPath();
+  try {
+    await fs.access(glyphRepairJarPath);
+  } catch {
+    return glyphRepairFailure(
+      'sidecar-unavailable',
+      'Glyph repair sidecar is unavailable. Build native/glyph-repair first.',
+    );
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'antigravity-glyph-repair-'));
+  const inputPath = path.join(tempDir, 'input.pdf');
+  const outputPath = path.join(tempDir, 'output.pdf');
+
+  try {
+    await fs.writeFile(inputPath, validInput.pdfBytes);
+    const { stdout, stderr } = await execFileAsync(
+      'java',
+      [
+        '-jar',
+        glyphRepairJarPath,
+        'repair',
+        '--input',
+        inputPath,
+        '--output',
+        outputPath,
+        '--pages',
+        validInput.pageNumbers.join(','),
+        '--format',
+        'json',
+      ],
+      {
+        timeout: 120_000,
+        maxBuffer: 16 * 1024 * 1024,
+        windowsHide: true,
+      },
+    );
+
+    const trimmedStdout = stdout.trim();
+    if (!trimmedStdout) {
+      return glyphRepairFailure(
+        'sidecar-failed',
+        stderr.trim() || 'Glyph repair sidecar returned no output.',
+      );
+    }
+
+    try {
+      const report = JSON.parse(trimmedStdout);
+      const repairedBytes = await fs.readFile(outputPath);
+      const pdfBytes = new Uint8Array(repairedBytes.byteLength);
+      pdfBytes.set(repairedBytes);
+      return { ok: true, pdfBytes, report };
+    } catch (err) {
+      return glyphRepairFailure(
+        'parse-failed',
+        `Glyph repair sidecar returned invalid output: ${errorMessage(err)}`,
+      );
+    }
+  } catch (err) {
+    return glyphRepairFailure('sidecar-failed', `Glyph repair failed: ${errorMessage(err)}`);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

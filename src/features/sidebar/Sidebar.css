@@ -375,6 +375,11 @@
   color: #fde68a;
 }
 
+.thumbnail-glyph-badge.repair.complete {
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.45);
+}
+
 @keyframes analysisPulse {
   0%, 100% { opacity: 0.65; }
   50% { opacity: 1; }

@@ -678,6 +678,29 @@ Still outside Phase 4A:
 - Validate visual identity and extraction.
 - Add repair report UI.
 
+Status: implemented for `1.7.0` on 2026-07-02.
+
+Completed:
+
+- added a sidecar `repair` command that writes deterministic `/ToUnicode`
+  streams only when every observed code maps safely;
+- rejects encrypted or signed documents before mutation;
+- validates repaired output by reloading it, comparing rendered page pixels, and
+  recording extraction-length changes;
+- added a typed Electron `repairGlyphText` bridge returning repaired PDF bytes
+  plus a repair report;
+- added workspace repair UI for diagnosed deterministic candidates and sidebar
+  repair badges;
+- packaged smoke coverage now checks the repair bridge and sidecar resource.
+
+Still outside Phase 4B:
+
+- replacing incorrect existing `/ToUnicode` maps;
+- OCR-assisted mapping for ambiguous glyph codes;
+- batch repair for selected/all suspect pages;
+- bundled Java runtime strategy;
+- independent qpdf/PDFium/Poppler validation in CI.
+
 #### Phase 4C: OCR-Assisted Mapping
 
 - Render page regions.

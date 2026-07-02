@@ -1,6 +1,6 @@
 # ADR 0001: Glyph Repair Engine
 
-Status: accepted for Phase 4A diagnostics
+Status: accepted for Phase 4B deterministic repair
 
 Date: 2026-07-02
 
@@ -21,7 +21,7 @@ for content-stream glyph analysis or embedded font internals.
 Use an Apache PDFBox/FontBox Java sidecar as the primary native glyph analysis
 and repair engine.
 
-Phase 4A ships diagnostics only:
+Phase 4A shipped diagnostics:
 
 - parse selected pages with `PDFStreamEngine`;
 - record font metadata, raw character codes, current Unicode mapping, rendering
@@ -30,9 +30,16 @@ Phase 4A ships diagnostics only:
   existing-map review candidates, or OCR-assisted mapping candidates;
 - return JSON through the typed Electron bridge.
 
-The renderer remains responsible for user workflow, job state, and status UI.
-PDF mutation is intentionally deferred until diagnostics, fixtures, and
-independent validation are reliable.
+Phase 4B adds conservative mutation:
+
+- generate `/ToUnicode` streams for fonts without existing maps when every
+  observed character code has a deterministic Unicode value;
+- skip encrypted, signed, damaged, vertical, existing-map, and ambiguous cases;
+- validate by reloading the repaired PDF, rendering selected pages, and
+  comparing pixel output before handing bytes back to the renderer.
+
+The renderer remains responsible for user workflow, page replacement, job
+state, and status UI. OCR-assisted mapping remains a later phase.
 
 ## Consequences
 
@@ -40,5 +47,5 @@ independent validation are reliable.
 - Packaged builds include a shaded `glyph-repair.jar` resource.
 - A future release should bundle or locate a Java runtime instead of assuming
   `java` exists on the user's machine.
-- `qpdf` and an independent extractor/renderer should validate repaired PDFs
-  before mutation ships.
+- `qpdf` and an independent extractor/renderer should be added to CI validation
+  before broader batch repair ships.

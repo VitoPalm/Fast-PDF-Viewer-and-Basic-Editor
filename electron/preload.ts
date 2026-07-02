@@ -8,6 +8,9 @@ const antigravityPdfBridge: AntigravityPdfBridge = {
   diagnoseGlyphText(input) {
     return ipcRenderer.invoke('diagnose-glyph-text', input);
   },
+  repairGlyphText(input) {
+    return ipcRenderer.invoke('repair-glyph-text', input);
+  },
 };
 
 contextBridge.exposeInMainWorld('antigravityPdf', antigravityPdfBridge);

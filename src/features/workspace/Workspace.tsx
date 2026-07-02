@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { usePdf } from '../../shared/hooks/usePdf';
 import { useRenderEngine } from '../pdf-engine/useRenderEngine';
-import { Trash2, ChevronLeft, ChevronRight, Plus, Download, Sparkles, X, FileSearch } from 'lucide-react';
+import { Trash2, ChevronLeft, ChevronRight, Plus, Download, Sparkles, X, FileSearch, Wrench } from 'lucide-react';
 import { type TextAnnotation } from '../../shared/types/pdf';
 import {
   cleanOcrFromPage,
   cleanOcrUnavailableMessage,
   exportModifiedPdf,
   glyphDiagnosticsUnavailableMessage,
+  glyphRepairUnavailableMessage,
   isAnalysisOcrCandidate,
   isNativeHiddenOcrAnalysis,
   type PageAnalysis,
@@ -17,7 +18,7 @@ import { getImportJobProgress, isImportJobBusy, isImportJobVisible, type ImportJ
 import { getOcrJobProgress, isOcrJobBusy, isOcrJobVisible, type OcrJob } from '../../context/ocrJob';
 import { getGlyphJobProgress, isGlyphJobBusy, isGlyphJobVisible, type GlyphJob } from '../../context/glyphRepairJob';
 import { isSuspectTextHealth } from '../pdf-engine/textLayerHealth';
-import { type GlyphDiagnosticsReport } from '../../shared/types/glyph';
+import { type GlyphDiagnosticsReport, type GlyphRepairReport } from '../../shared/types/glyph';
 import * as pdfjsLib from 'pdfjs-dist';
 import './Workspace.css';
 
@@ -87,6 +88,16 @@ const formatGlyphDiagnosticsSummary = (report: GlyphDiagnosticsReport): string =
   return `${report.fontCount} font${report.fontCount === 1 ? '' : 's'} inspected; glyph mappings look usable.`;
 };
 
+const formatGlyphRepairSummary = (report: GlyphRepairReport): string => {
+  if (report.fontsRepaired > 0) {
+    const changedPixels = (report.validation.maxChangedPixelRatio * 100).toFixed(4);
+    return `Repaired ${report.fontsRepaired} font${report.fontsRepaired === 1 ? '' : 's'} with ${report.mappingsAdded} Unicode mappings. Visual validation changed ${changedPixels}% of pixels.`;
+  }
+
+  const skipped = report.fonts.find(font => font.status === 'skipped');
+  return skipped?.message ?? 'No deterministic glyph repair was available for this page.';
+};
+
 const formatCount = (count: number, singular: string, plural = `${singular}s`): string => (
   `${count} ${count === 1 ? singular : plural}`
 );
@@ -137,7 +148,7 @@ export const Workspace: React.FC = () => {
     annotations, updateAnnotation, removeAnnotation,
     addFiles, replacePage, clearAllWithUndo, importJob,
     ocrJob, startOcr, cancelOcr, retryFailedOcr,
-    glyphJob, startGlyphDiagnostics, cancelGlyphDiagnostics,
+    glyphJob, startGlyphDiagnostics, cancelGlyphDiagnostics, repairGlyphTextPage,
   } = usePdf();
   const { requestPage } = useRenderEngine();
   const [isExporting, setIsExporting] = useState(false);
@@ -171,6 +182,7 @@ export const Workspace: React.FC = () => {
   const pageAnnotations = annotations.filter(a => a.pageId === activePageId);
   const canCleanOcr = typeof window !== 'undefined' && typeof window.antigravityPdf?.cleanOcrPage === 'function';
   const canDiagnoseGlyphText = typeof window !== 'undefined' && typeof window.antigravityPdf?.diagnoseGlyphText === 'function';
+  const canRepairGlyphText = typeof window !== 'undefined' && typeof window.antigravityPdf?.repairGlyphText === 'function';
 
   useEffect(() => {
     if (!activePage || !docInfo || !canvasRef.current) return;
@@ -452,9 +464,20 @@ export const Workspace: React.FC = () => {
     await startGlyphDiagnostics([activePage.id]);
   };
 
+  const handleGlyphRepair = async () => {
+    if (!activePage || activePage.glyphRepairStatus === 'running') return;
+    if (!canRepairGlyphText) {
+      alert(glyphRepairUnavailableMessage);
+      return;
+    }
+    if (!confirm('Repair this page by adding deterministic /ToUnicode mappings? The page artwork should remain unchanged.')) return;
+
+    await repairGlyphTextPage(activePage.id);
+  };
+
   const handleExport = async () => {
-    if (isImportRunning || isOcrRunning) {
-      alert('Wait for import and OCR jobs to finish before exporting.');
+    if (isImportRunning || isOcrRunning || isGlyphRepairing) {
+      alert('Wait for import, OCR, and text repair jobs to finish before exporting.');
       return;
     }
 
@@ -498,9 +521,15 @@ export const Workspace: React.FC = () => {
   const hasNativeHiddenOcr = !hasGeneratedOcr && isNativeHiddenOcrAnalysis(effectivePageAnalysis);
   const suspectCopy = effectivePageAnalysis && showSuspectTextLayer ? textHealthCopy(effectivePageAnalysis) : null;
   const hintCopy = ocrHintCopy(effectivePageAnalysis);
+  const isGlyphRepairing = activePage.glyphRepairStatus === 'running';
+  const canRepairActiveGlyphText = Boolean(activePage.glyphDiagnostics?.deterministicCandidateFonts);
   const glyphSummary = activePage.glyphDiagnostics
     ? formatGlyphDiagnosticsSummary(activePage.glyphDiagnostics)
     : null;
+  const glyphRepairSummary = activePage.glyphRepairReport
+    ? formatGlyphRepairSummary(activePage.glyphRepairReport)
+    : null;
+  const glyphBannerDetail = activePage.glyphRepairError ?? glyphRepairSummary ?? glyphSummary;
 
   return (
     <div className="workspace-viewport">
@@ -553,7 +582,7 @@ export const Workspace: React.FC = () => {
           >
             {debugTextLayer ? 'Hide Mesh' : 'Show Mesh'}
           </button>
-          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting || isImportRunning || isOcrRunning}>
+          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting || isImportRunning || isOcrRunning || isGlyphRepairing}>
             <Download size={16} /> {isExporting ? 'Exporting...' : 'Export PDF'}
           </button>
         </div>
@@ -567,20 +596,36 @@ export const Workspace: React.FC = () => {
           <div className="glass text-health-banner text-health-banner-warning">
             <div className="text-health-banner-copy">
               <span>{suspectCopy.message}</span>
-              <span className="text-health-banner-detail">{glyphSummary ?? suspectCopy.detail}</span>
+              <span className="text-health-banner-detail">{glyphBannerDetail ?? suspectCopy.detail}</span>
             </div>
-            {canDiagnoseGlyphText ? (
-              <button
-                className="btn btn-secondary text-health-banner-action"
-                onClick={handleGlyphDiagnostics}
-                disabled={isGlyphRunning || activePage.glyphDiagnosticsStatus === 'running'}
-              >
-                <FileSearch size={14} />
-                {activePage.glyphDiagnosticsStatus === 'complete' ? 'Run Again' : 'Diagnose Text'}
-              </button>
-            ) : (
-              <span className="text-health-banner-detail">{glyphDiagnosticsUnavailableMessage}</span>
-            )}
+            <div className="text-health-banner-actions">
+              {canDiagnoseGlyphText ? (
+                <button
+                  className="btn btn-secondary text-health-banner-action"
+                  onClick={handleGlyphDiagnostics}
+                  disabled={isGlyphRunning || isGlyphRepairing || activePage.glyphDiagnosticsStatus === 'running'}
+                >
+                  <FileSearch size={14} />
+                  {activePage.glyphDiagnosticsStatus === 'complete' ? 'Run Again' : 'Diagnose Text'}
+                </button>
+              ) : (
+                <span className="text-health-banner-detail">{glyphDiagnosticsUnavailableMessage}</span>
+              )}
+              {canRepairActiveGlyphText && (
+                canRepairGlyphText ? (
+                  <button
+                    className="btn btn-primary text-health-banner-action"
+                    onClick={handleGlyphRepair}
+                    disabled={isGlyphRepairing || isGlyphRunning}
+                  >
+                    <Wrench size={14} />
+                    {isGlyphRepairing ? 'Repairing...' : 'Repair Text'}
+                  </button>
+                ) : (
+                  <span className="text-health-banner-detail">{glyphRepairUnavailableMessage}</span>
+                )
+              )}
+            </div>
           </div>
         )}
         {hasGeneratedOcr && (

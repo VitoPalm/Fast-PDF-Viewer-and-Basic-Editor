@@ -38,6 +38,7 @@ export interface PdfContextType {
   cancelImport: () => void;
   startGlyphDiagnostics: (pageIds: string[]) => Promise<void>;
   cancelGlyphDiagnostics: () => void;
+  repairGlyphTextPage: (pageId: string) => Promise<void>;
   startOcr: (pageIds: string[], options: OcrJobOptions) => Promise<void>;
   cancelOcr: () => void;
   retryFailedOcr: () => Promise<void>;

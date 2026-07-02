@@ -20,10 +20,15 @@ type GlyphDiagnosticsResultLike =
   | { ok: true; report: { pageCount: number; pagesAnalyzed: number; fontCount: number; glyphEvents: number } }
   | { ok: false; error: { code: string; message: string } };
 
+type GlyphRepairResultLike =
+  | { ok: true; pdfBytes: Uint8Array; report: { pageCount: number; pagesAnalyzed: number; fontsRepaired: number; mappingsAdded: number } }
+  | { ok: false; error: { code: string; message: string } };
+
 type PackagedBridgeWindow = Window & {
   antigravityPdf?: {
     cleanOcrPage(input: { pdfBytes: Uint8Array; pageNumber: number }): Promise<CleanOcrResultLike>;
     diagnoseGlyphText(input: { pdfBytes: Uint8Array; pageNumbers: number[] }): Promise<GlyphDiagnosticsResultLike>;
+    repairGlyphText(input: { pdfBytes: Uint8Array; pageNumbers: number[] }): Promise<GlyphRepairResultLike>;
   };
 };
 
@@ -92,10 +97,16 @@ test.describe('Packaged app Batch 1 smoke regressions', () => {
           hasBridge: Boolean(bridge),
           hasCleanOcrPage: typeof bridge?.cleanOcrPage === 'function',
           hasDiagnoseGlyphText: typeof bridge?.diagnoseGlyphText === 'function',
+          hasRepairGlyphText: typeof bridge?.repairGlyphText === 'function',
         };
       });
 
-      expect(bridgeShape).toEqual({ hasBridge: true, hasCleanOcrPage: true, hasDiagnoseGlyphText: true });
+      expect(bridgeShape).toEqual({
+        hasBridge: true,
+        hasCleanOcrPage: true,
+        hasDiagnoseGlyphText: true,
+        hasRepairGlyphText: true,
+      });
 
       const invalidResult = await page.evaluate(async () => {
         const bridge = (window as PackagedBridgeWindow).antigravityPdf;
@@ -143,6 +154,28 @@ test.describe('Packaged app Batch 1 smoke regressions', () => {
         });
         expect(glyphResult.report.fontCount).toBeGreaterThan(0);
         expect(glyphResult.report.glyphEvents).toBeGreaterThan(0);
+      }
+
+      const repairResult = await page.evaluate(async (bytes) => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        if (!bridge) {
+          return { ok: false, error: { code: 'missing-bridge', message: 'Missing bridge.' } };
+        }
+        const result = await bridge.repairGlyphText({ pdfBytes: new Uint8Array(bytes), pageNumbers: [1] });
+        return result.ok
+          ? {
+              ok: true,
+              byteLength: result.pdfBytes.byteLength,
+              report: result.report,
+            }
+          : result;
+      }, Array.from(validPdfBytes));
+
+      expect(repairResult.ok).toBe(true);
+      if (repairResult.ok) {
+        expect(repairResult.byteLength).toBeGreaterThan(0);
+        expect(repairResult.report.fontsRepaired).toBeGreaterThan(0);
+        expect(repairResult.report.mappingsAdded).toBeGreaterThan(0);
       }
     } finally {
       await electronApp.close();

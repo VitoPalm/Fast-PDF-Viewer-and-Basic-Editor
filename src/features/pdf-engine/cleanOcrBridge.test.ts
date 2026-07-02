@@ -4,9 +4,16 @@ import {
   cleanOcrUnavailableMessage,
   diagnoseGlyphText,
   glyphDiagnosticsUnavailableMessage,
+  glyphRepairUnavailableMessage,
+  repairGlyphText,
   type PdfDocumentInfo,
 } from './utils';
-import { type AntigravityPdfBridge, type CleanOcrInput, type GlyphDiagnosticsInput } from '../../shared/types/electron';
+import {
+  type AntigravityPdfBridge,
+  type CleanOcrInput,
+  type GlyphDiagnosticsInput,
+  type GlyphRepairInput,
+} from '../../shared/types/electron';
 
 const originalBridge = window.antigravityPdf;
 
@@ -43,6 +50,9 @@ describe('Clean OCR renderer bridge', () => {
       async diagnoseGlyphText() {
         throw new Error('not used');
       },
+      async repairGlyphText() {
+        throw new Error('not used');
+      },
     };
     window.antigravityPdf = bridge;
 
@@ -70,6 +80,9 @@ describe('Clean OCR renderer bridge', () => {
         };
       },
       async diagnoseGlyphText() {
+        throw new Error('not used');
+      },
+      async repairGlyphText() {
         throw new Error('not used');
       },
     };
@@ -108,6 +121,9 @@ describe('Glyph diagnostics renderer bridge', () => {
           },
         };
       },
+      async repairGlyphText() {
+        throw new Error('not used');
+      },
     };
     window.antigravityPdf = bridge;
 
@@ -120,5 +136,75 @@ describe('Glyph diagnostics renderer bridge', () => {
     expect(input.pageNumbers).toEqual([3]);
     expect(Array.from(input.pdfBytes)).toEqual([4, 5, 6]);
     expect(report).toMatchObject({ pageCount: 4, pagesAnalyzed: 1, fontCount: 1 });
+  });
+});
+
+describe('Glyph repair renderer bridge', () => {
+  it('throws a precise unavailable error outside Electron', async () => {
+    delete window.antigravityPdf;
+
+    await expect(repairGlyphText(createDocInfo(), [2])).rejects.toThrow(glyphRepairUnavailableMessage);
+  });
+
+  it('passes PDF bytes and page numbers to the native repair bridge', async () => {
+    const capturedInputs: GlyphRepairInput[] = [];
+    const bridge: AntigravityPdfBridge = {
+      async cleanOcrPage() {
+        throw new Error('not used');
+      },
+      async diagnoseGlyphText() {
+        throw new Error('not used');
+      },
+      async repairGlyphText(input) {
+        capturedInputs.push(input);
+        return {
+          ok: true,
+          pdfBytes: new Uint8Array([8, 9, 10]),
+          report: {
+            pageCount: 4,
+            encrypted: false,
+            signatureCount: 0,
+            pagesAnalyzed: 1,
+            fontsConsidered: 1,
+            fontsRepaired: 1,
+            mappingsAdded: 3,
+            protectedDocument: false,
+            validation: {
+              reloaded: true,
+              visualPagesCompared: 1,
+              maxChangedPixelRatio: 0,
+              maxChannelDelta: 0,
+              beforeTextLength: 3,
+              afterTextLength: 3,
+              extractionChangedPages: 0,
+            },
+            afterDiagnostics: {
+              pageCount: 4,
+              encrypted: false,
+              signatureCount: 0,
+              pagesAnalyzed: 1,
+              fontCount: 1,
+              glyphEvents: 3,
+              unmappedGlyphs: 0,
+              deterministicCandidateFonts: 0,
+              pages: [],
+            },
+            fonts: [],
+          },
+        };
+      },
+    };
+    window.antigravityPdf = bridge;
+
+    const { blob, report } = await repairGlyphText(createDocInfo([7, 8, 9]), [3]);
+    const [input] = capturedInputs;
+    if (!input) {
+      throw new Error('Expected glyph repair bridge input to be captured.');
+    }
+
+    expect(input.pageNumbers).toEqual([3]);
+    expect(Array.from(input.pdfBytes)).toEqual([7, 8, 9]);
+    expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([8, 9, 10]);
+    expect(report).toMatchObject({ fontsRepaired: 1, mappingsAdded: 3 });
   });
 });

@@ -2,6 +2,10 @@ package com.antigravity.pdf;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.BufferedWriter;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -12,8 +16,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 
 import org.apache.fontbox.cmap.CMap;
+import org.apache.fontbox.ttf.CmapLookup;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.contentstream.PDFStreamEngine;
 import org.apache.pdfbox.contentstream.operator.DrawObject;
@@ -43,6 +51,7 @@ import org.apache.pdfbox.contentstream.operator.text.ShowTextLineAndSpace;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.font.PDCIDFont;
@@ -50,7 +59,12 @@ import org.apache.pdfbox.pdmodel.font.PDCIDSystemInfo;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDSimpleFont;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.apache.pdfbox.pdmodel.font.PDTrueTypeFont;
+import org.apache.pdfbox.pdmodel.font.encoding.GlyphList;
 import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
+import org.apache.pdfbox.rendering.ImageType;
+import org.apache.pdfbox.rendering.PDFRenderer;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.util.Matrix;
 import org.apache.pdfbox.util.Vector;
 
@@ -63,8 +77,15 @@ public final class GlyphRepairCli {
   public static void main(String[] args) {
     try {
       CliOptions options = CliOptions.parse(args);
-      GlyphDiagnosticsReport report = diagnose(options);
-      System.out.println(report.toJson());
+      if ("diagnose".equals(options.command)) {
+        GlyphDiagnosticsReport report = diagnose(options);
+        System.out.println(report.toJson());
+      } else if ("repair".equals(options.command)) {
+        GlyphRepairReport report = repair(options);
+        System.out.println(report.toJson());
+      } else {
+        throw new IllegalArgumentException("Unknown command: " + options.command);
+      }
     } catch (Exception err) {
       System.err.println(err.getMessage());
       System.exit(2);
@@ -92,26 +113,228 @@ public final class GlyphRepairCli {
     }
   }
 
+  private static GlyphRepairReport repair(CliOptions options) throws IOException {
+    if (options.outputFile == null) {
+      throw new IllegalArgumentException("Repair requires --output <pdf>.");
+    }
+
+    try (PDDocument document = Loader.loadPDF(options.inputFile)) {
+      List<Integer> pages = options.resolvePages(document.getNumberOfPages());
+      int signatureCount = document.getSignatureDictionaries().size();
+      boolean protectedDocument = document.isEncrypted() || signatureCount > 0;
+      Map<Integer, String> beforeText = extractPageText(document, pages);
+      Map<Integer, BufferedImage> beforeImages = renderPages(document, pages);
+      Map<PDFont, FontRepairAccumulator> fontAccumulators = new IdentityHashMap<>();
+
+      for (int pageNumber : pages) {
+        PDPage page = document.getPage(pageNumber - 1);
+        GlyphDiagnosticsEngine engine = new GlyphDiagnosticsEngine(pageNumber);
+        engine.processPage(page);
+
+        for (FontGlyphReportBuilder builder : engine.fontReports.values()) {
+          FontRepairAccumulator accumulator = fontAccumulators.computeIfAbsent(
+            builder.font,
+            FontRepairAccumulator::new
+          );
+          accumulator.observe(pageNumber, builder);
+        }
+      }
+
+      List<FontRepairResult> fontResults = new ArrayList<>();
+      for (FontRepairAccumulator accumulator : fontAccumulators.values()) {
+        fontResults.add(accumulator.repair(document, protectedDocument));
+      }
+      fontResults.sort(Comparator.comparing(result -> result.resourceName));
+
+      int repairedFonts = (int) fontResults.stream()
+        .filter(result -> "repaired".equals(result.status))
+        .count();
+      int mappingsAdded = fontResults.stream().mapToInt(result -> result.mappingsAdded).sum();
+
+      if (repairedFonts > 0) {
+        document.save(options.outputFile);
+      } else {
+        Files.copy(options.inputFile.toPath(), options.outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+      }
+
+      try (PDDocument repairedDocument = Loader.loadPDF(options.outputFile)) {
+        Map<Integer, String> afterText = extractPageText(repairedDocument, pages);
+        GlyphRepairValidation validation = validateRepair(
+          repairedDocument,
+          pages,
+          beforeText,
+          afterText,
+          beforeImages
+        );
+        GlyphDiagnosticsReport afterDiagnostics = diagnoseLoadedDocument(repairedDocument, pages);
+
+        return new GlyphRepairReport(
+          document.getNumberOfPages(),
+          document.isEncrypted(),
+          signatureCount,
+          pages.size(),
+          fontResults.size(),
+          repairedFonts,
+          mappingsAdded,
+          protectedDocument,
+          fontResults,
+          validation,
+          afterDiagnostics
+        );
+      }
+    }
+  }
+
+  private static GlyphDiagnosticsReport diagnoseLoadedDocument(PDDocument document, List<Integer> pages)
+    throws IOException {
+    List<PageGlyphReport> pageReports = new ArrayList<>();
+    for (int pageNumber : pages) {
+      PDPage page = document.getPage(pageNumber - 1);
+      GlyphDiagnosticsEngine engine = new GlyphDiagnosticsEngine(pageNumber);
+      engine.processPage(page);
+      pageReports.add(engine.toReport());
+    }
+
+    return new GlyphDiagnosticsReport(
+      document.getNumberOfPages(),
+      document.isEncrypted(),
+      document.getSignatureDictionaries().size(),
+      pageReports
+    );
+  }
+
+  private static Map<Integer, String> extractPageText(PDDocument document, List<Integer> pages)
+    throws IOException {
+    Map<Integer, String> textByPage = new java.util.LinkedHashMap<>();
+    for (int pageNumber : pages) {
+      PDFTextStripper stripper = new PDFTextStripper();
+      stripper.setStartPage(pageNumber);
+      stripper.setEndPage(pageNumber);
+      textByPage.put(pageNumber, stripper.getText(document));
+    }
+    return textByPage;
+  }
+
+  private static Map<Integer, BufferedImage> renderPages(PDDocument document, List<Integer> pages)
+    throws IOException {
+    Map<Integer, BufferedImage> images = new java.util.LinkedHashMap<>();
+    PDFRenderer renderer = new PDFRenderer(document);
+    renderer.setSubsamplingAllowed(true);
+    for (int pageNumber : pages) {
+      images.put(pageNumber, renderer.renderImage(pageNumber - 1, 1.0f, ImageType.RGB));
+    }
+    return images;
+  }
+
+  private static GlyphRepairValidation validateRepair(
+    PDDocument repairedDocument,
+    List<Integer> pages,
+    Map<Integer, String> beforeText,
+    Map<Integer, String> afterText,
+    Map<Integer, BufferedImage> beforeImages
+  ) throws IOException {
+    PDFRenderer renderer = new PDFRenderer(repairedDocument);
+    renderer.setSubsamplingAllowed(true);
+
+    int pagesCompared = 0;
+    double maxChangedPixelRatio = 0;
+    int maxChannelDelta = 0;
+
+    for (int pageNumber : pages) {
+      BufferedImage before = beforeImages.get(pageNumber);
+      if (before == null) continue;
+
+      BufferedImage after = renderer.renderImage(pageNumber - 1, 1.0f, ImageType.RGB);
+      PixelDiff diff = compareImages(before, after);
+      pagesCompared += 1;
+      maxChangedPixelRatio = Math.max(maxChangedPixelRatio, diff.changedPixelRatio);
+      maxChannelDelta = Math.max(maxChannelDelta, diff.maxChannelDelta);
+    }
+
+    int extractionChangedPages = 0;
+    int beforeTextLength = 0;
+    int afterTextLength = 0;
+    for (int pageNumber : pages) {
+      String before = beforeText.getOrDefault(pageNumber, "");
+      String after = afterText.getOrDefault(pageNumber, "");
+      beforeTextLength += before.length();
+      afterTextLength += after.length();
+      if (!before.equals(after)) {
+        extractionChangedPages += 1;
+      }
+    }
+
+    return new GlyphRepairValidation(
+      true,
+      pagesCompared,
+      maxChangedPixelRatio,
+      maxChannelDelta,
+      beforeTextLength,
+      afterTextLength,
+      extractionChangedPages
+    );
+  }
+
+  private static PixelDiff compareImages(BufferedImage before, BufferedImage after) {
+    if (before.getWidth() != after.getWidth() || before.getHeight() != after.getHeight()) {
+      return new PixelDiff(1, 255);
+    }
+
+    int changedPixels = 0;
+    int maxChannelDelta = 0;
+    int totalPixels = before.getWidth() * before.getHeight();
+
+    for (int y = 0; y < before.getHeight(); y++) {
+      for (int x = 0; x < before.getWidth(); x++) {
+        int beforeRgb = before.getRGB(x, y);
+        int afterRgb = after.getRGB(x, y);
+        if (beforeRgb == afterRgb) continue;
+
+        changedPixels += 1;
+        maxChannelDelta = Math.max(maxChannelDelta, channelDelta(beforeRgb, afterRgb, 16));
+        maxChannelDelta = Math.max(maxChannelDelta, channelDelta(beforeRgb, afterRgb, 8));
+        maxChannelDelta = Math.max(maxChannelDelta, channelDelta(beforeRgb, afterRgb, 0));
+      }
+    }
+
+    return new PixelDiff(totalPixels == 0 ? 0 : (double) changedPixels / totalPixels, maxChannelDelta);
+  }
+
+  private static int channelDelta(int left, int right, int shift) {
+    return Math.abs(((left >> shift) & 0xFF) - ((right >> shift) & 0xFF));
+  }
+
   private static final class CliOptions {
+    private final String command;
     private final File inputFile;
+    private final File outputFile;
     private final String pages;
 
-    private CliOptions(File inputFile, String pages) {
+    private CliOptions(String command, File inputFile, File outputFile, String pages) {
+      this.command = command;
       this.inputFile = inputFile;
+      this.outputFile = outputFile;
       this.pages = pages;
     }
 
     static CliOptions parse(String[] args) {
-      if (args.length == 0 || !"diagnose".equals(args[0])) {
-        throw new IllegalArgumentException("Usage: glyph-repair diagnose --input <pdf> [--pages 1,2,3|all]");
+      if (args.length == 0 || (!"diagnose".equals(args[0]) && !"repair".equals(args[0]))) {
+        throw new IllegalArgumentException(
+          "Usage: glyph-repair diagnose --input <pdf> [--pages 1,2,3|all] | " +
+          "glyph-repair repair --input <pdf> --output <pdf> [--pages 1,2,3|all]"
+        );
       }
 
+      String command = args[0];
       File input = null;
+      File output = null;
       String pages = "all";
       for (int i = 1; i < args.length; i++) {
         String arg = args[i];
         if ("--input".equals(arg) && i + 1 < args.length) {
           input = new File(args[++i]);
+        } else if ("--output".equals(arg) && i + 1 < args.length) {
+          output = new File(args[++i]);
         } else if ("--pages".equals(arg) && i + 1 < args.length) {
           pages = args[++i];
         } else if ("--format".equals(arg) && i + 1 < args.length) {
@@ -127,8 +350,11 @@ public final class GlyphRepairCli {
       if (input == null || !input.isFile()) {
         throw new IllegalArgumentException("Input PDF does not exist.");
       }
+      if ("repair".equals(command) && output == null) {
+        throw new IllegalArgumentException("Repair requires --output <pdf>.");
+      }
 
-      return new CliOptions(input, pages);
+      return new CliOptions(command, input, output, pages);
     }
 
     List<Integer> resolvePages(int pageCount) {
@@ -166,6 +392,484 @@ public final class GlyphRepairCli {
         throw new IllegalArgumentException("At least one page must be selected.");
       }
       return new ArrayList<>(resolved);
+    }
+  }
+
+  private static final class FontRepairAccumulator {
+    private final PDFont font;
+    private final Set<String> resourceNames = new TreeSet<>();
+    private final Set<Integer> pageNumbers = new TreeSet<>();
+    private final Set<Integer> observedCodes = new TreeSet<>();
+    private int glyphEvents;
+
+    FontRepairAccumulator(PDFont font) {
+      this.font = font;
+    }
+
+    void observe(int pageNumber, FontGlyphReportBuilder builder) {
+      pageNumbers.add(pageNumber);
+      resourceNames.addAll(builder.resourceNames);
+      observedCodes.addAll(builder.uniqueCodes);
+      glyphEvents += builder.glyphEvents;
+    }
+
+    FontRepairResult repair(PDDocument document, boolean protectedDocument) throws IOException {
+      FontMetadata metadata = FontMetadata.from(font);
+      String resourceName = String.join(",", resourceNames);
+      List<Integer> pages = new ArrayList<>(pageNumbers);
+
+      if (protectedDocument) {
+        return skipped(resourceName, metadata, pages, "protected-document", "Encrypted or signed PDFs are not mutated.");
+      }
+      if (metadata.hasToUnicode) {
+        return skipped(resourceName, metadata, pages, "existing-to-unicode", "Font already has a /ToUnicode map.");
+      }
+      if (metadata.damaged) {
+        return skipped(resourceName, metadata, pages, "damaged-font", "PDFBox reported this font as damaged.");
+      }
+      if (metadata.vertical) {
+        return skipped(resourceName, metadata, pages, "vertical-font", "Vertical writing mode repair is not enabled yet.");
+      }
+      if (observedCodes.isEmpty()) {
+        return skipped(resourceName, metadata, pages, "no-observed-codes", "No text-showing glyph codes were observed.");
+      }
+      if (!(font instanceof PDSimpleFont) && !(font instanceof PDType0Font)) {
+        return skipped(resourceName, metadata, pages, "unsupported-font-type", "Only simple fonts and Type0 fonts are enabled.");
+      }
+
+      Map<Integer, String> mapping = new java.util.TreeMap<>();
+      List<Integer> unmappedCodes = new ArrayList<>();
+      for (int code : observedCodes) {
+        String unicode = deterministicUnicode(font, code);
+        if (isSafeRepairUnicode(unicode)) {
+          mapping.put(code, unicode);
+        } else {
+          unmappedCodes.add(code);
+        }
+      }
+
+      if (!unmappedCodes.isEmpty()) {
+        return new FontRepairResult(
+          resourceName,
+          metadata,
+          "skipped",
+          "ambiguous-codes",
+          "Some observed codes could not be mapped deterministically.",
+          pages,
+          glyphEvents,
+          observedCodes.size(),
+          mapping.size(),
+          unmappedCodes.size(),
+          0,
+          sourceCodeBytes(font),
+          toCodeHexList(unmappedCodes)
+        );
+      }
+      if (mapping.isEmpty()) {
+        return skipped(resourceName, metadata, pages, "no-deterministic-mapping", "No safe code-to-Unicode mapping was found.");
+      }
+
+      int sourceBytes = sourceCodeBytes(font);
+      COSStream toUnicode = createToUnicodeStream(document, mapping, sourceBytes);
+      font.getCOSObject().setItem(COSName.TO_UNICODE, toUnicode);
+
+      return new FontRepairResult(
+        resourceName,
+        metadata,
+        "repaired",
+        "to-unicode-added",
+        "Added a deterministic /ToUnicode CMap.",
+        pages,
+        glyphEvents,
+        observedCodes.size(),
+        mapping.size(),
+        0,
+        mapping.size(),
+        sourceBytes,
+        Collections.emptyList()
+      );
+    }
+
+    private FontRepairResult skipped(
+      String resourceName,
+      FontMetadata metadata,
+      List<Integer> pages,
+      String reason,
+      String message
+    ) {
+      return new FontRepairResult(
+        resourceName,
+        metadata,
+        "skipped",
+        reason,
+        message,
+        pages,
+        glyphEvents,
+        observedCodes.size(),
+        0,
+        observedCodes.size(),
+        0,
+        sourceCodeBytes(font),
+        toCodeHexList(new ArrayList<>(observedCodes))
+      );
+    }
+  }
+
+  private static String deterministicUnicode(PDFont font, int code) throws IOException {
+    String unicode = font.toUnicode(code);
+    if (isSafeRepairUnicode(unicode)) {
+      return unicode;
+    }
+
+    if (font instanceof PDSimpleFont simpleFont) {
+      String glyphName = simpleFont.getEncoding() == null ? null : simpleFont.getEncoding().getName(code);
+      unicode = unicodeFromGlyphName(glyphName);
+      if (isSafeRepairUnicode(unicode)) {
+        return unicode;
+      }
+    }
+
+    if (font instanceof PDTrueTypeFont trueTypeFont) {
+      unicode = unicodeFromTrueTypeGlyph(trueTypeFont, code);
+      if (isSafeRepairUnicode(unicode)) {
+        return unicode;
+      }
+    }
+
+    if (font instanceof PDType0Font type0Font) {
+      CMap ucs2 = type0Font.getCMapUCS2();
+      if (ucs2 != null) {
+        unicode = ucs2.toUnicode(type0Font.codeToCID(code));
+        if (isSafeRepairUnicode(unicode)) {
+          return unicode;
+        }
+      }
+
+      CmapLookup lookup = type0Font.getCmapLookup();
+      if (lookup != null) {
+        int gid = type0Font.codeToGID(code);
+        unicode = unicodeFromGlyphId(lookup, gid);
+        if (isSafeRepairUnicode(unicode)) {
+          return unicode;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private static String unicodeFromTrueTypeGlyph(PDTrueTypeFont font, int code) throws IOException {
+    CmapLookup lookup = font.getTrueTypeFont().getUnicodeCmapLookup(false);
+    if (lookup == null) {
+      return null;
+    }
+    return unicodeFromGlyphId(lookup, font.codeToGID(code));
+  }
+
+  private static String unicodeFromGlyphId(CmapLookup lookup, int glyphId) {
+    List<Integer> charCodes = lookup.getCharCodes(glyphId);
+    if (charCodes == null || charCodes.size() != 1) {
+      return null;
+    }
+
+    int codePoint = charCodes.get(0);
+    if (!Character.isValidCodePoint(codePoint)) {
+      return null;
+    }
+    return new String(Character.toChars(codePoint));
+  }
+
+  private static String unicodeFromGlyphName(String glyphName) {
+    if (glyphName == null || glyphName.isBlank()) {
+      return null;
+    }
+
+    String unicode = GlyphList.getAdobeGlyphList().toUnicode(glyphName);
+    if (unicode != null && !unicode.isEmpty()) {
+      return unicode;
+    }
+
+    if (glyphName.matches("uni[0-9A-Fa-f]{4}([0-9A-Fa-f]{4})*")) {
+      String hex = glyphName.substring(3);
+      StringBuilder value = new StringBuilder();
+      for (int i = 0; i < hex.length(); i += 4) {
+        int codePoint = Integer.parseInt(hex.substring(i, i + 4), 16);
+        value.append((char) codePoint);
+      }
+      return value.toString();
+    }
+
+    if (glyphName.matches("u[0-9A-Fa-f]{4,6}")) {
+      int codePoint = Integer.parseInt(glyphName.substring(1), 16);
+      if (Character.isValidCodePoint(codePoint)) {
+        return new String(Character.toChars(codePoint));
+      }
+    }
+
+    return null;
+  }
+
+  private static boolean isSafeRepairUnicode(String unicode) {
+    if (unicode == null || unicode.isEmpty()) {
+      return false;
+    }
+    if (unicode.indexOf('\uFFFD') >= 0 || containsPrivateUse(unicode)) {
+      return false;
+    }
+    return unicode.codePoints().noneMatch(codePoint -> (
+      codePoint == 0 ||
+      Character.isISOControl(codePoint) && codePoint != '\t' && codePoint != '\n' && codePoint != '\r'
+    ));
+  }
+
+  private static int sourceCodeBytes(PDFont font) {
+    return font instanceof PDSimpleFont ? 1 : 2;
+  }
+
+  private static COSStream createToUnicodeStream(
+    PDDocument document,
+    Map<Integer, String> mapping,
+    int sourceBytes
+  ) throws IOException {
+    COSStream stream = document.getDocument().createCOSStream();
+    try (OutputStream output = stream.createOutputStream(COSName.FLATE_DECODE);
+         BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(output, StandardCharsets.US_ASCII))) {
+      writer.write("/CIDInit /ProcSet findresource begin\n");
+      writer.write("12 dict begin\n\n");
+      writer.write("begincmap\n");
+      writer.write("/CIDSystemInfo\n");
+      writer.write("<< /Registry (Adobe)\n");
+      writer.write("/Ordering (UCS)\n");
+      writer.write("/Supplement 0\n");
+      writer.write(">> def\n\n");
+      writer.write("/CMapName /Adobe-Identity-UCS def\n");
+      writer.write("/CMapType 2 def\n\n");
+      writer.write("1 begincodespacerange\n");
+      writer.write("<");
+      writer.write("00".repeat(sourceBytes));
+      writer.write("> <");
+      writer.write("FF".repeat(sourceBytes));
+      writer.write(">\n");
+      writer.write("endcodespacerange\n\n");
+
+      List<Map.Entry<Integer, String>> entries = new ArrayList<>(mapping.entrySet());
+      for (int index = 0; index < entries.size(); index += 100) {
+        int batchSize = Math.min(100, entries.size() - index);
+        writer.write(Integer.toString(batchSize));
+        writer.write(" beginbfchar\n");
+        for (int offset = 0; offset < batchSize; offset++) {
+          Map.Entry<Integer, String> entry = entries.get(index + offset);
+          writer.write("<");
+          writer.write(toFixedHex(entry.getKey(), sourceBytes * 2));
+          writer.write("> <");
+          writer.write(toUtf16BeHex(entry.getValue()));
+          writer.write(">\n");
+        }
+        writer.write("endbfchar\n\n");
+      }
+
+      writer.write("endcmap\n");
+      writer.write("CMapName currentdict /CMap defineresource pop\n");
+      writer.write("end\n");
+      writer.write("end\n");
+    }
+    return stream;
+  }
+
+  private static String toFixedHex(int code, int length) {
+    String hex = Integer.toHexString(code).toUpperCase(Locale.ROOT);
+    return "0".repeat(Math.max(length - hex.length(), 0)) + hex;
+  }
+
+  private static String toUtf16BeHex(String value) {
+    StringBuilder hex = new StringBuilder();
+    for (int index = 0; index < value.length(); index++) {
+      hex.append(toFixedHex(value.charAt(index), 4));
+    }
+    return hex.toString();
+  }
+
+  private static List<String> toCodeHexList(List<Integer> codes) {
+    return codes.stream().map(GlyphRepairCli::toCodeHex).toList();
+  }
+
+  private static final class PixelDiff {
+    private final double changedPixelRatio;
+    private final int maxChannelDelta;
+
+    PixelDiff(double changedPixelRatio, int maxChannelDelta) {
+      this.changedPixelRatio = changedPixelRatio;
+      this.maxChannelDelta = maxChannelDelta;
+    }
+  }
+
+  private static final class GlyphRepairReport implements JsonWritable {
+    private final int pageCount;
+    private final boolean encrypted;
+    private final int signatureCount;
+    private final int pagesAnalyzed;
+    private final int fontsConsidered;
+    private final int fontsRepaired;
+    private final int mappingsAdded;
+    private final boolean protectedDocument;
+    private final List<FontRepairResult> fonts;
+    private final GlyphRepairValidation validation;
+    private final GlyphDiagnosticsReport afterDiagnostics;
+
+    GlyphRepairReport(
+      int pageCount,
+      boolean encrypted,
+      int signatureCount,
+      int pagesAnalyzed,
+      int fontsConsidered,
+      int fontsRepaired,
+      int mappingsAdded,
+      boolean protectedDocument,
+      List<FontRepairResult> fonts,
+      GlyphRepairValidation validation,
+      GlyphDiagnosticsReport afterDiagnostics
+    ) {
+      this.pageCount = pageCount;
+      this.encrypted = encrypted;
+      this.signatureCount = signatureCount;
+      this.pagesAnalyzed = pagesAnalyzed;
+      this.fontsConsidered = fontsConsidered;
+      this.fontsRepaired = fontsRepaired;
+      this.mappingsAdded = mappingsAdded;
+      this.protectedDocument = protectedDocument;
+      this.fonts = Collections.unmodifiableList(new ArrayList<>(fonts));
+      this.validation = validation;
+      this.afterDiagnostics = afterDiagnostics;
+    }
+
+    @Override
+    public String toJson() {
+      StringBuilder json = new StringBuilder();
+      json.append('{');
+      appendNumber(json, "pageCount", pageCount).append(',');
+      appendBoolean(json, "encrypted", encrypted).append(',');
+      appendNumber(json, "signatureCount", signatureCount).append(',');
+      appendNumber(json, "pagesAnalyzed", pagesAnalyzed).append(',');
+      appendNumber(json, "fontsConsidered", fontsConsidered).append(',');
+      appendNumber(json, "fontsRepaired", fontsRepaired).append(',');
+      appendNumber(json, "mappingsAdded", mappingsAdded).append(',');
+      appendBoolean(json, "protectedDocument", protectedDocument).append(',');
+      json.append("\"validation\":").append(validation.toJson()).append(',');
+      json.append("\"afterDiagnostics\":").append(afterDiagnostics.toJson()).append(',');
+      json.append("\"fonts\":[");
+      appendJoined(json, fonts);
+      json.append("]}");
+      return json.toString();
+    }
+  }
+
+  private static final class GlyphRepairValidation implements JsonWritable {
+    private final boolean reloaded;
+    private final int visualPagesCompared;
+    private final double maxChangedPixelRatio;
+    private final int maxChannelDelta;
+    private final int beforeTextLength;
+    private final int afterTextLength;
+    private final int extractionChangedPages;
+
+    GlyphRepairValidation(
+      boolean reloaded,
+      int visualPagesCompared,
+      double maxChangedPixelRatio,
+      int maxChannelDelta,
+      int beforeTextLength,
+      int afterTextLength,
+      int extractionChangedPages
+    ) {
+      this.reloaded = reloaded;
+      this.visualPagesCompared = visualPagesCompared;
+      this.maxChangedPixelRatio = maxChangedPixelRatio;
+      this.maxChannelDelta = maxChannelDelta;
+      this.beforeTextLength = beforeTextLength;
+      this.afterTextLength = afterTextLength;
+      this.extractionChangedPages = extractionChangedPages;
+    }
+
+    @Override
+    public String toJson() {
+      StringBuilder json = new StringBuilder();
+      json.append('{');
+      appendBoolean(json, "reloaded", reloaded).append(',');
+      appendNumber(json, "visualPagesCompared", visualPagesCompared).append(',');
+      appendDecimal(json, "maxChangedPixelRatio", maxChangedPixelRatio).append(',');
+      appendNumber(json, "maxChannelDelta", maxChannelDelta).append(',');
+      appendNumber(json, "beforeTextLength", beforeTextLength).append(',');
+      appendNumber(json, "afterTextLength", afterTextLength).append(',');
+      appendNumber(json, "extractionChangedPages", extractionChangedPages);
+      json.append('}');
+      return json.toString();
+    }
+  }
+
+  private static final class FontRepairResult implements JsonWritable {
+    private final String resourceName;
+    private final FontMetadata metadata;
+    private final String status;
+    private final String reason;
+    private final String message;
+    private final List<Integer> pages;
+    private final int glyphEvents;
+    private final int observedCodes;
+    private final int mappedCodes;
+    private final int unmappedCodes;
+    private final int mappingsAdded;
+    private final int sourceCodeBytes;
+    private final List<String> unmappedCodeHex;
+
+    FontRepairResult(
+      String resourceName,
+      FontMetadata metadata,
+      String status,
+      String reason,
+      String message,
+      List<Integer> pages,
+      int glyphEvents,
+      int observedCodes,
+      int mappedCodes,
+      int unmappedCodes,
+      int mappingsAdded,
+      int sourceCodeBytes,
+      List<String> unmappedCodeHex
+    ) {
+      this.resourceName = resourceName;
+      this.metadata = metadata;
+      this.status = status;
+      this.reason = reason;
+      this.message = message;
+      this.pages = Collections.unmodifiableList(new ArrayList<>(pages));
+      this.glyphEvents = glyphEvents;
+      this.observedCodes = observedCodes;
+      this.mappedCodes = mappedCodes;
+      this.unmappedCodes = unmappedCodes;
+      this.mappingsAdded = mappingsAdded;
+      this.sourceCodeBytes = sourceCodeBytes;
+      this.unmappedCodeHex = Collections.unmodifiableList(new ArrayList<>(unmappedCodeHex));
+    }
+
+    @Override
+    public String toJson() {
+      StringBuilder json = new StringBuilder();
+      json.append('{');
+      appendString(json, "resourceName", resourceName).append(',');
+      json.append("\"font\":").append(metadata.toJson()).append(',');
+      appendString(json, "status", status).append(',');
+      appendString(json, "reason", reason).append(',');
+      appendString(json, "message", message).append(',');
+      appendNumberArray(json, "pages", pages).append(',');
+      appendNumber(json, "glyphEvents", glyphEvents).append(',');
+      appendNumber(json, "observedCodes", observedCodes).append(',');
+      appendNumber(json, "mappedCodes", mappedCodes).append(',');
+      appendNumber(json, "unmappedCodes", unmappedCodes).append(',');
+      appendNumber(json, "mappingsAdded", mappingsAdded).append(',');
+      appendNumber(json, "sourceCodeBytes", sourceCodeBytes).append(',');
+      appendStringArray(json, "unmappedCodeHex", unmappedCodeHex);
+      json.append('}');
+      return json.toString();
     }
   }
 
@@ -313,6 +1017,9 @@ public final class GlyphRepairCli {
     private String repairPlan(FontMetadata metadata) {
       if (glyphEvents == 0) {
         return "no-text";
+      }
+      if (!metadata.hasToUnicode && !metadata.damaged && unmappedGlyphs == 0 && privateUseGlyphs == 0 && replacementGlyphs == 0) {
+        return "deterministic-to-unicode-candidate";
       }
       if (unmappedGlyphs == 0 && privateUseGlyphs == 0 && replacementGlyphs == 0) {
         return "mapping-present";
@@ -649,6 +1356,30 @@ public final class GlyphRepairCli {
 
   private static StringBuilder appendNumber(StringBuilder json, String key, int value) {
     return json.append('"').append(key).append("\":").append(value);
+  }
+
+  private static StringBuilder appendNumberArray(StringBuilder json, String key, List<Integer> values) {
+    json.append('"').append(key).append("\":[");
+    for (int i = 0; i < values.size(); i++) {
+      if (i > 0) {
+        json.append(',');
+      }
+      json.append(values.get(i));
+    }
+    json.append(']');
+    return json;
+  }
+
+  private static StringBuilder appendStringArray(StringBuilder json, String key, List<String> values) {
+    json.append('"').append(key).append("\":[");
+    for (int i = 0; i < values.size(); i++) {
+      if (i > 0) {
+        json.append(',');
+      }
+      json.append(quote(values.get(i)));
+    }
+    json.append(']');
+    return json;
   }
 
   private static StringBuilder appendDecimal(StringBuilder json, String key, double value) {

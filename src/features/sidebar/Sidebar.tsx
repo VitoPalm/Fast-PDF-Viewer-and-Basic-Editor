@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable, type DragStart, type DropResult, type DraggableProvided } from '@hello-pangea/dnd';
-import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare, Sparkles, AlertTriangle, FileSearch } from 'lucide-react';
+import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare, Sparkles, AlertTriangle, FileSearch, Wrench } from 'lucide-react';
 import { usePdf } from '../../shared/hooks/usePdf';
 import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 import { PageRangeBar } from '../batch-ops/PageRangeBar';
@@ -364,6 +364,10 @@ const getThumbnailStatusText = (page: PdfPageInfo) => {
   if (page.glyphDiagnosticsStatus === 'failed') status.push(`glyph diagnostics failed${page.glyphDiagnosticsError ? `: ${page.glyphDiagnosticsError}` : ''}`);
   if (page.glyphDiagnosticsStatus === 'skipped') status.push('glyph diagnostics skipped');
   if (page.glyphDiagnosticsStatus === 'complete' || page.glyphDiagnostics) status.push('glyph diagnostics complete');
+  if (page.glyphRepairStatus === 'running') status.push('glyph repair running');
+  if (page.glyphRepairStatus === 'failed') status.push(`glyph repair failed${page.glyphRepairError ? `: ${page.glyphRepairError}` : ''}`);
+  if (page.glyphRepairStatus === 'skipped') status.push(`glyph repair skipped${page.glyphRepairError ? `: ${page.glyphRepairError}` : ''}`);
+  if (page.glyphRepairStatus === 'complete' || page.glyphRepairReport) status.push('glyph repair complete');
   if (page.ocrStatus === 'queued') status.push('OCR queued');
   if (page.ocrStatus === 'running') status.push('OCR running');
   if (page.ocrStatus === 'failed') status.push(`OCR failed${page.ocrError ? `: ${page.ocrError}` : ''}`);
@@ -392,6 +396,11 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
     isSelected ? 'selected' : null,
     ...statusText,
   ].filter(Boolean).join(', ');
+  const hasGlyphRepairBadge = (
+    page.glyphRepairStatus === 'running' ||
+    page.glyphRepairStatus === 'failed' ||
+    page.glyphRepairStatus === 'complete'
+  );
 
   return (
     <div
@@ -426,17 +435,32 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
               <AlertTriangle size={10} />
             </div>
           )}
-          {(page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running') && (
+          {page.glyphRepairStatus === 'running' && (
+            <div className="thumbnail-glyph-badge running repair" title="Glyph repair in progress" aria-label="Glyph repair in progress">
+              <Wrench size={10} />
+            </div>
+          )}
+          {page.glyphRepairStatus === 'failed' && (
+            <div className="thumbnail-glyph-badge failed repair" title={page.glyphRepairError ?? 'Glyph repair failed'} aria-label="Glyph repair failed">
+              !
+            </div>
+          )}
+          {page.glyphRepairStatus === 'complete' && (
+            <div className="thumbnail-glyph-badge complete repair" title="Glyph repair complete" aria-label="Glyph repair complete">
+              <Wrench size={10} />
+            </div>
+          )}
+          {!hasGlyphRepairBadge && (page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running') && (
             <div className="thumbnail-glyph-badge running" title="Glyph diagnostics in progress" aria-label="Glyph diagnostics in progress">
               <FileSearch size={10} />
             </div>
           )}
-          {page.glyphDiagnosticsStatus === 'failed' && (
+          {!hasGlyphRepairBadge && page.glyphDiagnosticsStatus === 'failed' && (
             <div className="thumbnail-glyph-badge failed" title={page.glyphDiagnosticsError ?? 'Glyph diagnostics failed'} aria-label="Glyph diagnostics failed">
               !
             </div>
           )}
-          {page.glyphDiagnosticsStatus === 'complete' && (
+          {!hasGlyphRepairBadge && page.glyphDiagnosticsStatus === 'complete' && (
             <div className="thumbnail-glyph-badge complete" title="Glyph diagnostics complete" aria-label="Glyph diagnostics complete">
               <FileSearch size={10} />
             </div>
