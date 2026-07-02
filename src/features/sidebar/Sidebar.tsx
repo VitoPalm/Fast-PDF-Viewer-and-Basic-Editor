@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable, type DragStart, type DropResult, type DraggableProvided } from '@hello-pangea/dnd';
-import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare, Sparkles } from 'lucide-react';
+import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare, Sparkles, AlertTriangle } from 'lucide-react';
 import { usePdf } from '../../shared/hooks/usePdf';
 import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 import { PageRangeBar } from '../batch-ops/PageRangeBar';
 import { DocumentMinimap } from './DocumentMinimap';
 import { type PdfPageInfo } from '../pdf-engine/utils';
+import { isSuspectTextHealth } from '../pdf-engine/textLayerHealth';
 import './Sidebar.css';
 
 const ITEM_HEIGHT = 88;
@@ -364,6 +365,11 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
           {page.analysisStatus === 'failed' && (
             <div className="thumbnail-analysis-badge failed" title={page.analysisError ?? 'Page analysis failed'}>
               !
+            </div>
+          )}
+          {page.analysis && isSuspectTextHealth(page.analysis.textHealth) && (
+            <div className="thumbnail-text-health-badge" title="Text layer suspect">
+              <AlertTriangle size={10} />
             </div>
           )}
           {(page.ocrStatus === 'queued' || page.ocrStatus === 'running') && (

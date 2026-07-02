@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type PdfPageInfo } from '../features/pdf-engine/utils';
+import { type PageAnalysis, type PdfPageInfo } from '../features/pdf-engine/utils';
 import {
   applyPageAnalysisUpdateForJob,
   createIdleImportJob,
@@ -7,6 +7,16 @@ import {
   importJobReducer,
   orderImportedPagesForAnalysis,
 } from './importJob';
+
+const healthyAnalysis: PageAnalysis = {
+  hasText: true,
+  hasOCR: false,
+  isScanned: false,
+  textHealth: 'healthy',
+  textHealthReasons: [],
+  textItemCount: 12,
+  textSample: 'Readable page text',
+};
 
 describe('import job state', () => {
   it('tracks file, placeholder, and analysis progress transitions', () => {
@@ -111,12 +121,12 @@ describe('import page helpers', () => {
       jobId: 1,
       pageId: 'p1',
       status: 'complete',
-      analysis: { hasText: true, hasOCR: false, isScanned: false },
+      analysis: healthyAnalysis,
     });
 
     expect(complete[0]).toMatchObject({
       analysisStatus: 'complete',
-      analysis: { hasText: true, hasOCR: false, isScanned: false },
+      analysis: { hasText: true, hasOCR: false, isScanned: false, textHealth: 'healthy' },
     });
 
     const failed = applyPageAnalysisUpdateForJob(complete, {
@@ -138,7 +148,7 @@ describe('import page helpers', () => {
       jobId: 1,
       pageId: 'p1',
       status: 'complete',
-      analysis: { hasText: true, hasOCR: false, isScanned: false },
+      analysis: healthyAnalysis,
     });
 
     expect(next).toBeInstanceOf(Array);

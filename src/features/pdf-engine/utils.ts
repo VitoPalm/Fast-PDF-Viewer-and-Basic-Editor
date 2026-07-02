@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument, rgb, PDFOperator, PDFOperatorNames, PDFName } from 'pdf-lib';
 import { type TextAnnotation } from '../../shared/types/pdf';
+import { analyzeTextLayerHealth, type TextLayerHealthStatus } from './textLayerHealth';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -34,26 +35,41 @@ export interface PageAnalysis {
   hasText: boolean;
   hasOCR: boolean; // Detected invisible text layer
   isScanned: boolean;
+  textHealth: TextLayerHealthStatus;
+  textHealthReasons: string[];
+  textItemCount: number;
+  textSample: string;
 }
 
 export const analyzePage = async (page: pdfjsLib.PDFPageProxy): Promise<PageAnalysis> => {
-  const textContent = await page.getTextContent();
-  const hasText = textContent.items.length > 0;
+  try {
+    const textContent = await page.getTextContent();
+    const health = analyzeTextLayerHealth(textContent);
+    const hasText = health.itemCount > 0 && health.status !== 'imageOnly';
+    const hasOCR = health.status === 'hiddenOcr';
+    const isScanned = health.status === 'imageOnly' || health.status === 'sparse';
 
-  const hasRenderingMode = (item: unknown): item is { renderingMode: number } => (
-    typeof item === 'object' &&
-    item !== null &&
-    'renderingMode' in item &&
-    typeof (item as { renderingMode?: unknown }).renderingMode === 'number'
-  );
-
-  // OCR detection: check if all text is hidden (renderingMode 3)
-  const hasOCR = hasText && textContent.items.some(item => hasRenderingMode(item) && item.renderingMode === 3);
-
-  // If there's no text, or only very little text compared to what might be expected, it's likely scanned.
-  const isScanned = !hasText || (hasText && textContent.items.length < 5);
-
-  return { hasText, hasOCR, isScanned };
+    return {
+      hasText,
+      hasOCR,
+      isScanned,
+      textHealth: health.status,
+      textHealthReasons: health.reasons,
+      textItemCount: health.itemCount,
+      textSample: health.sample,
+    };
+  } catch (err) {
+    console.warn('PDF text analysis failed', err);
+    return {
+      hasText: false,
+      hasOCR: false,
+      isScanned: false,
+      textHealth: 'unsupported',
+      textHealthReasons: ['text-extraction-failed'],
+      textItemCount: 0,
+      textSample: '',
+    };
+  }
 };
 
 export const analyzeDocument = async (pdfjsDoc: pdfjsLib.PDFDocumentProxy): Promise<PageAnalysis[]> => {
@@ -166,14 +182,26 @@ export const exportModifiedPdf = async (
   return new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 };
 
-export const cleanOcrFromPage = async (docInfo: PdfDocumentInfo, pageIndex: number): Promise<Blob> => {
+export const cleanOcrUnavailableMessage = 'Native Clean OCR is unavailable in this environment.';
+
+export const cleanOcrFromPage = async (docInfo: PdfDocumentInfo, pageNumber: number): Promise<Blob> => {
+  if (!window.antigravityPdf?.cleanOcrPage) {
+    throw new Error(cleanOcrUnavailableMessage);
+  }
+
   const arrayBuffer = await docInfo.file.arrayBuffer();
   const pdfBytes = new Uint8Array(arrayBuffer);
 
-  // Hand off to the Node.js backend to run Ghostscript
-  const newPdfBytes = await window.ipcRenderer.invoke<Uint8Array>('convert-text-to-paths', pdfBytes, pageIndex);
-  const outputBytes = new Uint8Array(newPdfBytes.byteLength);
-  outputBytes.set(newPdfBytes);
+  const result = await window.antigravityPdf.cleanOcrPage({ pdfBytes, pageNumber });
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
 
-  return new Blob([outputBytes.buffer], { type: 'application/pdf' });
+  const outputBytes = new Uint8Array(result.pdfBytes);
+  const outputBuffer = outputBytes.buffer.slice(
+    outputBytes.byteOffset,
+    outputBytes.byteOffset + outputBytes.byteLength,
+  );
+
+  return new Blob([outputBuffer], { type: 'application/pdf' });
 };

@@ -322,13 +322,40 @@ Still outside Batch 3:
 - vendored/offline Tesseract assets;
 - text-layer health and glyph repair routing.
 
+### Batch 4 Implementation Note
+
+Status: implemented on 2026-07-02.
+
+Completed:
+
+- renderer no longer exposes generic Electron IPC;
+- Clean OCR now uses a typed `window.antigravityPdf.cleanOcrPage` bridge;
+- Clean OCR IPC validates byte payloads and 1-indexed page numbers before
+  Ghostscript runs;
+- Ghostscript virtual file-system cleanup now runs in `finally`;
+- browser-only renderer mode reports Clean OCR as unavailable instead of
+  throwing on missing IPC;
+- page analysis now records text-layer health:
+  `healthy`, `hiddenOcr`, `sparse`, `suspectEncoding`, `imageOnly`, and
+  `unsupported`;
+- suspect or unsupported native text layers are not rendered as selectable DOM
+  text;
+- workspace and sidebar surface non-destructive text-layer health diagnostics.
+
+Still outside Batch 4:
+
+- OCR language override UI;
+- vendored/offline Tesseract assets;
+- deterministic glyph text repair and mutation;
+- deeper font/ToUnicode diagnostics beyond PDF.js text-content heuristics.
+
 ### Workstream E: Clean OCR Native Boundary
 
 Owner scope:
 
 - `electron/main.ts`
 - `electron/preload.ts`
-- `src/shared/types/electron.d.ts`
+- `src/shared/types/electron.ts`
 - native PDF utility calls in `src/features/pdf-engine/*`
 
 Tasks:

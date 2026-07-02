@@ -11,6 +11,16 @@ const fixtures = {
   sparse665: path.join(fixtureDir, 'db_book_665p_sparse_text.pdf'),
 };
 
+type CleanOcrResultLike =
+  | { ok: true; pdfBytes: Uint8Array }
+  | { ok: false; error: { code: string; message: string } };
+
+type PackagedBridgeWindow = Window & {
+  antigravityPdf?: {
+    cleanOcrPage(input: { pdfBytes: Uint8Array; pageNumber: number }): Promise<CleanOcrResultLike>;
+  };
+};
+
 function requireFixture(filePath: string) {
   test.skip(!existsSync(filePath), `Missing local PDF UI fixture: ${filePath}`);
 }
@@ -53,6 +63,38 @@ async function confirmDialogAction(page: Page, dialogName: RegExp, actionName: s
 }
 
 test.describe('Packaged app Batch 1 smoke regressions', () => {
+  test('packaged preload exposes typed Clean OCR bridge and rejects invalid input', async ({ browserName }, testInfo) => {
+    void browserName;
+    const { electronApp, page } = await launchPackagedApp(testInfo);
+
+    try {
+      const bridgeShape = await page.evaluate(() => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        return {
+          hasBridge: Boolean(bridge),
+          hasCleanOcrPage: typeof bridge?.cleanOcrPage === 'function',
+        };
+      });
+
+      expect(bridgeShape).toEqual({ hasBridge: true, hasCleanOcrPage: true });
+
+      const invalidResult = await page.evaluate(async () => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        if (!bridge) {
+          return { ok: false, error: { code: 'missing-bridge', message: 'Missing bridge.' } };
+        }
+        return bridge.cleanOcrPage({ pdfBytes: new Uint8Array(), pageNumber: 1 });
+      });
+
+      expect(invalidResult).toMatchObject({
+        ok: false,
+        error: { code: 'invalid-input' },
+      });
+    } finally {
+      await electronApp.close();
+    }
+  });
+
   test('loads the packaged app, opens a PDF, and keeps invalid mixed range actions disabled', async ({ browserName }, testInfo) => {
     void browserName;
     requireFixture(fixtures.stats27);

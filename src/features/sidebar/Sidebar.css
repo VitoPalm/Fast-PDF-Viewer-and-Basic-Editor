@@ -268,6 +268,23 @@
   font-weight: 700;
 }
 
+.thumbnail-text-health-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: rgba(20, 22, 28, 0.88);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 11;
+  animation: fadeIn 0.3s ease;
+}
+
 @keyframes analysisPulse {
   0%, 100% { opacity: 0.65; }
   50% { opacity: 1; }
