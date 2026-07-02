@@ -142,11 +142,10 @@ Completed:
 
 Still outside Batch 1:
 
-- large-document lazy import and progress;
 - OCR job model refactor;
 - Clean OCR native bridge rewrite;
 - glyph text repair;
-- global lint cleanup for existing OCR/Electron/Workspace issues.
+- native boundary and release hardening.
 
 ### Workstream A: Range And Destructive Safety
 
@@ -251,6 +250,21 @@ Acceptance criteria:
 - Clearing during import does not append late pages afterward.
 - Re-loading multiple large files does not keep old render caches alive.
 
+### Batch 2 Implementation Note
+
+Status: implemented on 2026-07-02.
+
+Completed:
+
+- import jobs publish page placeholders before background analysis completes;
+- upload and Add PDFs to Merge show import progress;
+- Start Over/Clear All cancels stale import work;
+- page thumbnails show analysis pending/running/failed state;
+- lint/type debt around OCR processing, PDF.js analysis, Electron preload
+  declarations, and Workspace canvas refs was cleared;
+- unit, desktop Playwright, and packaged smoke coverage were added for large
+  import progress.
+
 ### Workstream D: OCR State And Existing OCR Flow
 
 Owner scope:
@@ -286,6 +300,27 @@ Acceptance criteria:
 - OCR completion updates workspace and sidebar state.
 - Cancelling batch OCR preserves completed results and marks skipped pages.
 - OCR does not re-render the same page unnecessarily within one job.
+
+### Batch 3 Implementation Note
+
+Status: implemented on 2026-07-02.
+
+Completed:
+
+- OCR job state is now first-class in context;
+- single-page, selected-page, and batch OCR use the same runner;
+- selected-page OCR now consumes the selected scanned page ids;
+- cancellation preserves completed OCR results and marks queued/running pages
+  skipped;
+- failed OCR pages can be retried;
+- OCR completion updates page analysis so stale scanned-page badges disappear.
+
+Still outside Batch 3:
+
+- Clean OCR native bridge rewrite;
+- OCR language override UI;
+- vendored/offline Tesseract assets;
+- text-layer health and glyph repair routing.
 
 ### Workstream E: Clean OCR Native Boundary
 

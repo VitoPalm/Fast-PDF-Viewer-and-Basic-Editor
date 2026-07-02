@@ -133,3 +133,18 @@ Packaged smoke coverage:
 - verifies invalid mixed range actions remain disabled in packaged mode;
 - verifies destructive Remove confirmation and undo in packaged mode;
 - verifies direct page jump/sidebar sync in packaged mode.
+
+## Batch 2 And 3 Regression Additions
+
+Added on 2026-07-02:
+
+- `tests/playwright/batch2-import-progress.spec.ts`
+- `tests/playwright/batch3-ocr-job.spec.ts`
+
+Coverage:
+
+- large imports publish page count and render page 1 while analysis continues;
+- Start Over during import cancels stale work;
+- Add PDFs to Merge shows import progress and appends pages;
+- selected scanned pages start a context OCR job;
+- OCR cancellation marks queued/running pages skipped.

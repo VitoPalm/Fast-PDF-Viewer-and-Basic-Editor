@@ -22,6 +22,8 @@ export interface PdfPageInfo {
   thumbnailDataUrl?: string; // Cache the thumbnail
   analysisStatus?: 'pending' | 'running' | 'complete' | 'failed';
   analysisError?: string;
+  ocrStatus?: 'idle' | 'queued' | 'running' | 'complete' | 'failed' | 'skipped';
+  ocrError?: string;
   ocrResult?: {
     items: Array<{ str: string, transform: number[], width: number, height: number }>;
   };
