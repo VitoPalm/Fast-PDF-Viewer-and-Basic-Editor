@@ -1,0 +1,84 @@
+.ocr-hint-container {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  pointer-events: none;
+  animation: slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slide-down {
+  from { transform: translate(-50%, -20px); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
+
+.ocr-hint-card {
+  pointer-events: all;
+  width: 380px;
+  padding: 16px;
+  display: flex;
+  gap: 16px;
+  background: rgba(20, 22, 28, 0.9) !important;
+  border: 1px solid var(--accent-glow) !important;
+  box-shadow: var(--shadow-lg), 0 0 15px rgba(99, 102, 241, 0.2);
+  position: relative;
+}
+
+.ocr-hint-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--accent-glow);
+  color: var(--accent-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ocr-hint-content {
+  flex: 1;
+}
+
+.ocr-hint-content h4 {
+  margin: 0 0 4px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ocr-hint-content p {
+  margin: 0 0 12px 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.ocr-hint-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ocr-hint-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: var(--transition-fast);
+}
+
+.ocr-hint-close:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.75rem;
+}

@@ -8,6 +8,7 @@
 - **Dynamic Page Manipulation**: Real-time reordering, merging, and splitting of PDF pages.
 - **Glassmorphism UI**: A premium dark-mode aesthetic with vibrant accents and smooth animations.
 - **Batch Operations**: Advanced page selection and manipulation using range patterns.
+- **Intelligent OCR Engine**: Automated scan detection and text recognition using Tesseract.js with real-time processing feedback.
 - **Low-Latency Interactions**: Optimized for large documents with virtualization and caching.
 
 ---
@@ -151,6 +152,8 @@ Given the document-centric nature of the app, **React Context** was chosen for i
 - **CSS Variables**: Used extensively to maintain a consistent theme and allow for easy future skinning (e.g., Light Mode).
 - **Virtualization**: Large document support is achieved by only rendering pages visible in the viewport (implemented in Sidebar and Workspace).
 - **Worker Loading**: PDF.js workers are loaded via a separate thread to ensure the UI remains responsive during heavy rendering tasks.
+- **Progressive OCR Pipeline**: Scanned pages are automatically identified. The OCR engine uses a parallel worker pool (`navigator.hardwareConcurrency`-aware, up to 4 threads) via Tesseract.js's scheduler to process multiple pages concurrently. Batch OCR runs entirely off-screen — pages are rendered to off-screen canvases at 2× resolution and sent to the worker pool, allowing users to freely navigate the document during processing. The batch pipeline includes a **lightweight language detection step** that samples the first page's text and performs stop-word frequency analysis to automatically load secondary language models (e.g., Italian, French, Spanish) alongside English. The batch is cancellable with an option to keep partial results. Text is grouped at the line level (not word level) so that copied text includes proper spacing. The text layer uses a dual-container architecture separating PDF.js native text from React-managed OCR overlays.
+- **Multi-input Zoom**: Zoom is supported via the UI slider, Ctrl+scroll (mouse wheel), and trackpad pinch-to-zoom gestures.
 
 ---
 
@@ -168,6 +171,5 @@ $$y' = Height_{PDF} - \frac{y}{scale} - \frac{FontSize_{scaled}}{scale}$$
 
 ## 9. Future Roadmap
 - [ ] **Advanced Annotations**: Support for shapes, highlights, and images.
-- [ ] **OCR Integration**: Text recognition for scanned documents.
 - [ ] **Cloud Sync**: Optional integration with cloud storage providers.
 - [ ] **Plugin System**: Modular extensions for specialized PDF workflows.

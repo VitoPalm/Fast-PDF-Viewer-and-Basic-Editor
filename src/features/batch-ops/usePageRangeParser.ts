@@ -11,6 +11,11 @@ export interface RangeParseResult {
   tokenCount: number;
 }
 
+function parsePositiveInteger(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  return Number(value);
+}
+
 /**
  * Parse a page-range expression string.
  *
@@ -41,9 +46,9 @@ export function parsePageRange(input: string, totalPages: number): RangeParseRes
       }
 
       const [startStr, endStr] = parts;
-      const start = parseInt(startStr, 10);
+      const start = parsePositiveInteger(startStr);
 
-      if (isNaN(start) || start < 1) {
+      if (start === null || start < 1) {
         errors.push({ token, reason: `Invalid start page "${startStr}"` });
         continue;
       }
@@ -56,15 +61,21 @@ export function parsePageRange(input: string, totalPages: number): RangeParseRes
       if (endStr.toLowerCase() === 'end' || endStr === '') {
         end = totalPages;
       } else {
-        end = parseInt(endStr, 10);
-        if (isNaN(end)) {
+        const parsedEnd = parsePositiveInteger(endStr);
+        if (parsedEnd === null) {
           errors.push({ token, reason: `Invalid end page "${endStr}"` });
           continue;
         }
+        end = parsedEnd;
       }
 
+      if (end < 1) {
+        errors.push({ token, reason: `Range end ${end} out of range (1-${totalPages})` });
+        continue;
+      }
       if (end > totalPages) {
-        end = totalPages; // Clamp silently
+        errors.push({ token, reason: `End page ${end} exceeds total (${totalPages})` });
+        continue;
       }
       if (end < start) {
         errors.push({ token, reason: `End (${end}) is before start (${start})` });
@@ -74,8 +85,8 @@ export function parsePageRange(input: string, totalPages: number): RangeParseRes
       for (let i = start; i <= end; i++) pages.add(i);
     } else {
       // Single page
-      const num = parseInt(token, 10);
-      if (isNaN(num)) {
+      const num = parsePositiveInteger(token);
+      if (num === null) {
         errors.push({ token, reason: `"${token}" is not a valid page number` });
         continue;
       }

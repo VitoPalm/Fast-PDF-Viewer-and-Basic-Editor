@@ -16,6 +16,7 @@ Antigravity PDF is a premium, professional-grade PDF viewer and editor designed 
 - **🎨 Glassmorphism Design**: A stunning, modern interface built with vanilla CSS, featuring vibrant gradients, subtle blurs, and micro-animations.
 - **⚡ Page Range Engine**: Perform complex batch operations (Delete, Extract, Reorder) using a powerful command syntax (e.g., `1-5, 12, 50-end`).
 - **🎞️ Interactive Filmstrip**: A virtualized sidebar for rapid navigation and multi-select page manipulation.
+- **🧠 Intelligent OCR**: Automated scan detection and high-performance text recognition using Tesseract.js. Features a batch processing pipeline that automatically flattens pages with existing text before re-scanning, and a dual-container text layer that cleanly separates native PDF text from OCR-generated overlays.
 - **🛠️ Advanced Editing**: Add text annotations, merge multiple documents, and reorder pages with intuitive drag-and-drop.
 
 ## 🏗️ Technical Architecture

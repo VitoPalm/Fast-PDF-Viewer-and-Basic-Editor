@@ -3,13 +3,14 @@ import { Scissors, Trash2, Download, CheckSquare, X, AlertTriangle } from 'lucid
 import { usePdf } from '../../shared/hooks/usePdf';
 import { usePageRangeParser } from './usePageRangeParser';
 import { exportModifiedPdf } from '../pdf-engine/utils';
+import { pageIdsByNumbers } from '../page-operations/pageOperations';
 import { PageStrip } from './PageStrip';
 import './BatchOps.css';
 
 export const PageRangeBar: React.FC = () => {
   const {
     pages, documents, annotations,
-    selectPagesByNumbers, extractPages, removePages, clearSelection,
+    selectPagesByNumbers, removePagesWithUndo, keepOnlyPagesWithUndo,
     rangeInput: input, setRangeInput: setInput
   } = usePdf();
   const [isFocused, setIsFocused] = useState(false);
@@ -30,26 +31,24 @@ export const PageRangeBar: React.FC = () => {
     }
   }, [parsedPages.length]);
 
-  const getPageIdsByNumbers = useCallback((nums: number[]) => {
-    return nums.map(n => pages[n - 1]?.id).filter(Boolean) as string[];
-  }, [pages]);
+  const getPageIdsByNumbers = useCallback((nums: number[]) => pageIdsByNumbers(pages, nums), [pages]);
 
   const handleExtract = useCallback(() => {
-    if (parsedPages.length === 0) return;
+    if (!isValid || parsedPages.length === 0) return;
     const ids = getPageIdsByNumbers(parsedPages);
-    extractPages(ids);
+    keepOnlyPagesWithUndo(ids);
     setInput('');
-  }, [parsedPages, getPageIdsByNumbers, extractPages, setInput]);
+  }, [isValid, parsedPages, getPageIdsByNumbers, keepOnlyPagesWithUndo, setInput]);
 
   const handleRemove = useCallback(() => {
-    if (parsedPages.length === 0) return;
+    if (!isValid || parsedPages.length === 0) return;
     const ids = getPageIdsByNumbers(parsedPages);
-    removePages(ids);
+    removePagesWithUndo(ids);
     setInput('');
-  }, [parsedPages, getPageIdsByNumbers, removePages, setInput]);
+  }, [isValid, parsedPages, getPageIdsByNumbers, removePagesWithUndo, setInput]);
 
   const handleExportRange = useCallback(async () => {
-    if (parsedPages.length === 0) return;
+    if (!isValid || parsedPages.length === 0) return;
     setIsExporting(true);
     try {
       const ids = getPageIdsByNumbers(parsedPages);
@@ -70,17 +69,16 @@ export const PageRangeBar: React.FC = () => {
     } finally {
       setIsExporting(false);
     }
-  }, [parsedPages, getPageIdsByNumbers, pages, documents, annotations, input]);
+  }, [isValid, parsedPages, getPageIdsByNumbers, pages, documents, annotations, input]);
 
   const handleSelect = useCallback(() => {
-    if (parsedPages.length === 0) return;
+    if (!isValid || parsedPages.length === 0) return;
     selectPagesByNumbers(parsedPages);
     setInput('');
-  }, [parsedPages, selectPagesByNumbers, setInput]);
+  }, [isValid, parsedPages, selectPagesByNumbers, setInput]);
 
   const handleClear = () => {
     setInput('');
-    clearSelection();
     inputRef.current?.focus();
   };
 
@@ -115,6 +113,7 @@ export const PageRangeBar: React.FC = () => {
   const hasInput = input.trim().length > 0;
   const hasErrors = errors.length > 0;
   const showActions = hasInput && parsedPages.length > 0;
+  const canRunActions = isValid && parsedPages.length > 0;
 
   return (
     <div className={`page-range-bar ${isFocused ? 'focused' : ''} ${hasErrors ? 'has-errors' : ''}`}>
@@ -141,19 +140,19 @@ export const PageRangeBar: React.FC = () => {
         </div>
         {showActions && (
           <div className="page-range-actions">
-            <button className="page-range-action-btn extract" onClick={handleExtract}>
+            <button className="page-range-action-btn extract" onClick={handleExtract} disabled={!canRunActions}>
               <Scissors size={14} />
               <span>Keep Only</span>
             </button>
-            <button className="page-range-action-btn remove" onClick={handleRemove}>
+            <button className="page-range-action-btn remove" onClick={handleRemove} disabled={!canRunActions}>
               <Trash2 size={14} />
               <span>Remove</span>
             </button>
-            <button className="page-range-action-btn export" onClick={handleExportRange} disabled={isExporting}>
+            <button className="page-range-action-btn export" onClick={handleExportRange} disabled={!canRunActions || isExporting}>
               <Download size={14} />
               <span>{isExporting ? '...' : 'Save as PDF'}</span>
             </button>
-            <button className="page-range-action-btn select" onClick={handleSelect}>
+            <button className="page-range-action-btn select" onClick={handleSelect} disabled={!canRunActions}>
               <CheckSquare size={14} />
               <span>Select</span>
             </button>
@@ -162,11 +161,11 @@ export const PageRangeBar: React.FC = () => {
       </div>
       {hasInput && (
         <div className="page-range-status">
-          {parsedPages.length > 0 && <span className="page-range-count">{parsedPages.length} pages selected</span>}
-          {hasErrors && <span className="page-range-error"><AlertTriangle size={12} />{errors[0].reason}</span>}
+          {isValid && parsedPages.length > 0 && <span className="page-range-count">{parsedPages.length} pages selected</span>}
+          {hasErrors && <span className="page-range-error"><AlertTriangle size={12} />{errors[0].token}: {errors[0].reason}</span>}
         </div>
       )}
-      {showStrip && <PageStrip pageNumbers={parsedPages} />}
+      {showStrip && isValid && <PageStrip pageNumbers={parsedPages} />}
     </div>
   );
 };
