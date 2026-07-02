@@ -322,13 +322,55 @@ Still outside Batch 3:
 - vendored/offline Tesseract assets;
 - text-layer health and glyph repair routing.
 
+### Batch 4 Implementation Note
+
+Status: implemented on 2026-07-02.
+
+Completed:
+
+- renderer no longer exposes generic Electron IPC;
+- Clean OCR now uses a typed `window.antigravityPdf.cleanOcrPage` bridge;
+- Clean OCR IPC validates byte payloads and 1-indexed page numbers before
+  Ghostscript runs;
+- Ghostscript virtual file-system cleanup now runs in `finally`;
+- browser-only renderer mode reports Clean OCR as unavailable instead of
+  throwing on missing IPC;
+- page analysis now records text-layer health:
+  `healthy`, `hiddenOcr`, `sparse`, `suspectEncoding`, `imageOnly`, and
+  `unsupported`;
+- suspect or unsupported native text layers are not rendered as selectable DOM
+  text;
+- workspace and sidebar surface non-destructive text-layer health diagnostics.
+
+Still outside Batch 4:
+
+- OCR language override UI;
+- vendored/offline Tesseract assets;
+- deterministic glyph text repair and mutation;
+- deeper font/ToUnicode diagnostics beyond PDF.js text-content heuristics.
+
+### 1.5.1 Stabilization Note
+
+Status: completed on 2026-07-02.
+
+Scope:
+
+- improve upload, workspace, sidebar, range, and OCR accessibility after the
+  native/text-health implementation;
+- keep toolbar, range preview, thumbnail, and import/OCR progress layouts
+  usable at supported desktop widths;
+- run focused UX critique and adversarial workflow checks before moving to
+  glyph repair;
+- keep the 1.5.0 native/text-health behavior intact while shipping the fixes as
+  patch release `1.5.1`.
+
 ### Workstream E: Clean OCR Native Boundary
 
 Owner scope:
 
 - `electron/main.ts`
 - `electron/preload.ts`
-- `src/shared/types/electron.d.ts`
+- `src/shared/types/electron.ts`
 - native PDF utility calls in `src/features/pdf-engine/*`
 
 Tasks:
@@ -610,6 +652,23 @@ Pipeline:
 - Add UI badge: "Text layer suspect".
 - No PDF mutation.
 
+Status: implemented for `1.6.0` on 2026-07-02.
+
+Completed:
+
+- added a PDFBox/FontBox Java sidecar under `native/glyph-repair`;
+- added a typed Electron `diagnoseGlyphText` bridge;
+- added page-level glyph diagnostics status and report storage;
+- added workspace and sidebar diagnostics UI for suspect text pages;
+- added unit and packaged smoke coverage for the diagnostics bridge.
+
+Still outside Phase 4A:
+
+- deterministic `/ToUnicode` mutation;
+- OCR-assisted glyph mapping;
+- bundled Java runtime strategy;
+- independent render/extraction validation in automated tests.
+
 #### Phase 4B: Deterministic ToUnicode Repair
 
 - Generate `/ToUnicode` for simple recoverable cases:
@@ -618,6 +677,29 @@ Pipeline:
   - subset fonts with reliable embedded `cmap`.
 - Validate visual identity and extraction.
 - Add repair report UI.
+
+Status: implemented for `1.7.0` on 2026-07-02.
+
+Completed:
+
+- added a sidecar `repair` command that writes deterministic `/ToUnicode`
+  streams only when every observed code maps safely;
+- rejects encrypted or signed documents before mutation;
+- validates repaired output by reloading it, comparing rendered page pixels, and
+  recording extraction-length changes;
+- added a typed Electron `repairGlyphText` bridge returning repaired PDF bytes
+  plus a repair report;
+- added workspace repair UI for diagnosed deterministic candidates and sidebar
+  repair badges;
+- packaged smoke coverage now checks the repair bridge and sidecar resource.
+
+Still outside Phase 4B:
+
+- replacing incorrect existing `/ToUnicode` maps;
+- OCR-assisted mapping for ambiguous glyph codes;
+- batch repair for selected/all suspect pages;
+- bundled Java runtime strategy;
+- independent qpdf/PDFium/Poppler validation in CI.
 
 #### Phase 4C: OCR-Assisted Mapping
 
@@ -628,12 +710,51 @@ Pipeline:
 - Write only high-confidence mappings.
 - Present ambiguous mappings for review or skip.
 
+Status: first guarded implementation for `1.8.0` on 2026-07-02.
+
+Completed:
+
+- added sidecar `--ocr-text-file` support for strict single-page OCR-assisted
+  `/ToUnicode` generation;
+- replaces existing `/ToUnicode` only when explicitly requested and either the
+  current mappings are unsafe or OCR text is supplied;
+- requires one-font, one-page, one-codepoint-per-glyph alignment before writing
+  OCR-assisted maps;
+- skips length mismatches and same-code/different-character conflicts with
+  report reasons instead of guessing.
+
+Still outside Phase 4C:
+
+- geometric OCR word/line alignment;
+- multi-font OCR-assisted pages;
+- ligature and many-to-one/many-to-many glyph mappings;
+- human review UI for ambiguous maps.
+
 #### Phase 4D: Batch Repair And Export Integration
 
 - Add batch repair for selected/all suspect pages.
 - Integrate with export pipeline.
 - Add job queue, cancellation, retry, and partial-results reporting.
 - Keep repaired source document separate from original until user saves/exports.
+
+Status: initial selected/suspect batch repair implemented for `1.8.0` on
+2026-07-02.
+
+Completed:
+
+- added a workspace Repair Text toolbar action;
+- selected pages are repaired when a selection exists, otherwise suspect pages
+  are processed;
+- page-level repair status, reports, and sidebar badges are reused for batch
+  progress;
+- export is blocked while any page repair is running.
+
+Still outside Phase 4D:
+
+- dedicated repair job reducer with cancellation/retry;
+- aggregate batch progress pill;
+- one-call multi-page source-document mutation;
+- final export-time repair queue.
 
 ### Synthetic Fixtures
 

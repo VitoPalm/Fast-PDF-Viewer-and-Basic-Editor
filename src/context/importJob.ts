@@ -24,6 +24,7 @@ export interface ImportJob {
 
 export type ImportJobAction =
   | { type: 'started'; jobId: number; filesTotal: number }
+  | { type: 'analysis-only-started'; jobId: number; pagesTotal: number }
   | { type: 'loading-file'; jobId: number; fileName: string }
   | { type: 'pages-discovered'; jobId: number; fileName: string; pageCount: number }
   | { type: 'pages-instantiated'; jobId: number; count: number }
@@ -40,6 +41,11 @@ const BUSY_PHASES = new Set<ImportJobPhase>([
   'instantiating',
   'analyzing',
 ]);
+const BLOCKING_PHASES = new Set<ImportJobPhase>([
+  'reading',
+  'loading',
+  'instantiating',
+]);
 
 export const createIdleImportJob = (id = 0): ImportJob => ({
   id,
@@ -54,6 +60,7 @@ export const createIdleImportJob = (id = 0): ImportJob => ({
 });
 
 export const isImportJobBusy = (job: ImportJob): boolean => BUSY_PHASES.has(job.phase);
+export const isImportJobBlocking = (job: ImportJob): boolean => BLOCKING_PHASES.has(job.phase);
 
 export const isImportJobVisible = (job: ImportJob): boolean => (
   job.phase !== 'idle' && job.phase !== 'complete' && job.phase !== 'cancelled'
@@ -82,6 +89,15 @@ export const importJobReducer = (job: ImportJob, action: ImportJobAction): Impor
       ...createIdleImportJob(action.jobId),
       phase: 'reading',
       filesTotal: action.filesTotal,
+    };
+  }
+
+  if (action.type === 'analysis-only-started') {
+    return {
+      ...createIdleImportJob(action.jobId),
+      phase: 'analyzing',
+      pagesTotal: action.pagesTotal,
+      pagesInstantiated: action.pagesTotal,
     };
   }
 
@@ -220,6 +236,25 @@ export const applyPageAnalysisUpdateForJob = (
       analysis: update.analysis ?? page.analysis,
       analysisStatus: update.status,
       analysisError: update.error,
+    };
+  });
+
+  return changed ? nextPages : pages;
+};
+
+export const markPendingAnalysisCancelled = (
+  pages: PdfPageInfo[],
+  error = 'PDF analysis was cancelled before this page could be checked.',
+): PdfPageInfo[] => {
+  let changed = false;
+  const nextPages = pages.map(page => {
+    if (page.analysisStatus !== 'pending' && page.analysisStatus !== 'running') return page;
+
+    changed = true;
+    return {
+      ...page,
+      analysisStatus: 'failed' as const,
+      analysisError: error,
     };
   });
 

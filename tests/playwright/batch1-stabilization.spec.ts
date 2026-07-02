@@ -21,6 +21,7 @@ async function loadPdf(page: Page, filePath: string, expectedPages: number, test
   await expect(page.locator('.page-count-badge')).toHaveText(String(expectedPages), { timeout: 120_000 });
   await expect(page.locator('.page-indicator-label')).toContainText(`1 / ${expectedPages}`);
   await page.locator('.pdf-page-container.ready').waitFor({ timeout: 60_000 });
+  await expect(page.locator('[data-testid="workspace-import-progress"]')).toHaveCount(0, { timeout: 60_000 });
   await page.screenshot({ path: testInfo.outputPath(`loaded-${expectedPages}-pages.png`), fullPage: true });
 }
 
@@ -181,7 +182,7 @@ test.describe('Batch 1 desktop PDF regressions', () => {
     await expect(remove).toBeEnabled();
 
     await remove.click();
-    const dialog = page.getByRole('dialog', { name: /remove selected pages/i });
+    const dialog = page.getByRole('dialog', { name: /remove pages in range/i });
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText(/Remove 2 pages/i);
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -190,8 +191,9 @@ test.describe('Batch 1 desktop PDF regressions', () => {
 
     await fillRange(page, '2-3');
     await remove.click();
-    await confirmDialogAction(page, /remove selected pages/i, 'Remove');
+    await confirmDialogAction(page, /remove pages in range/i, 'Remove');
     await expectPageCount(page, 25);
+    await expect(page.locator('.page-range-input')).toHaveValue('');
 
     await undoMutation(page, /Removed 2 pages/i);
     await expectPageCount(page, 27);
@@ -208,11 +210,12 @@ test.describe('Batch 1 desktop PDF regressions', () => {
     await expect(keepOnly).toBeEnabled();
     await keepOnly.click();
 
-    const dialog = page.getByRole('dialog', { name: /keep only these pages/i });
+    const dialog = page.getByRole('dialog', { name: /keep only pages in range/i });
     await expect(dialog).toContainText(/Keep 3 pages and remove 24/i);
     await dialog.getByRole('button', { name: 'Keep only', exact: true }).click();
     await expect(dialog).toBeHidden();
     await expectPageCount(page, 3);
+    await expect(page.locator('.page-range-input')).toHaveValue('');
 
     await undoMutation(page, /Kept only 3 pages/i);
     await expectPageCount(page, 27);
@@ -226,6 +229,13 @@ test.describe('Batch 1 desktop PDF regressions', () => {
 
     await page.locator('.thumbnail-remove').first().click();
     const dialog = page.getByRole('dialog', { name: /remove page/i });
+    await expect(dialog).toContainText(/Remove page 1/i);
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('.page-indicator-label')).toContainText('1 / 27');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+
+    await page.locator('.thumbnail-remove').first().click();
     await expect(dialog).toContainText(/Remove page 1/i);
     await dialog.getByRole('button', { name: 'Remove', exact: true }).click();
     await expect(dialog).toBeHidden();
@@ -279,17 +289,23 @@ test.describe('Batch 1 desktop PDF regressions', () => {
     await page.screenshot({ path: testInfo.outputPath('start-over-undo.png'), fullPage: true });
   });
 
-  test('undo expires after the short-lived undo window', async ({ page }, testInfo) => {
+  test('undo pauses while focused and expires after focus leaves', async ({ page }, testInfo) => {
     requireFixture(fixtures.stats27);
     await loadPdf(page, fixtures.stats27, 27, testInfo);
 
     await fillRange(page, '2');
     await firstRangeButton(page, 'Remove').click();
-    await confirmDialogAction(page, /remove selected pages/i, 'Remove');
+    await confirmDialogAction(page, /remove pages in range/i, 'Remove');
     await expectPageCount(page, 26);
 
     const undoToast = page.getByRole('status').filter({ hasText: /Removed 1 page/i });
     await expect(undoToast).toBeVisible();
+    await expect(undoToast.getByRole('button', { name: 'Undo', exact: true })).toBeFocused();
+    await page.waitForTimeout(8_500);
+    await expect(undoToast).toBeVisible();
+    await expectPageCount(page, 26);
+
+    await page.getByRole('button', { name: 'Start Over', exact: true }).focus();
     await expect(undoToast).toBeHidden({ timeout: 9_500 });
     await expectPageCount(page, 26);
 

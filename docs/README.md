@@ -4,6 +4,8 @@ This directory contains the working engineering notes for Antigravity PDF.
 
 - [Project overview](PROJECT_OVERVIEW.md): architecture, workflows, and current
   risks.
+- [ADR 0001](adr/0001-glyph-repair-engine.md): PDFBox/FontBox sidecar decision
+  for glyph diagnostics and repair.
 - [Playwright diagnostics](PLAYWRIGHT_DIAGNOSTICS.md): desktop UI/UX findings,
   fixtures, and artifact locations from the July 2026 diagnostic pass.
 - [Roadmap](ROADMAP.md): stabilization plan, glyph text repair roadmap,

@@ -41,24 +41,23 @@ test.describe('Batch 3 OCR jobs', () => {
     await createImageOnlyFixture(fixturePath, 3);
     await loadPdf(page, fixturePath, 3, testInfo);
 
-    const scannedThumbnail = page.locator('.thumbnail-item').filter({
-      has: page.locator('.thumbnail-ocr-badge[title="Scanned page (needs OCR)"]'),
-    }).first();
-    await expect(scannedThumbnail).toBeVisible({ timeout: 30_000 });
-    await scannedThumbnail.click({ modifiers: ['Control'] });
+    const scannedThumbnailButton = page.getByRole('button', { name: /Open page 1 .* OCR candidate/i });
+    await expect(scannedThumbnailButton).toBeVisible({ timeout: 30_000 });
+    await scannedThumbnailButton.click({ modifiers: ['Control'] });
 
     await expect(page.locator('.batch-toolbar-count')).toContainText('selected');
-    page.once('dialog', async nativeDialog => {
-      expect(nativeDialog.message()).toMatch(/Run OCR on \d+ pages\?/);
-      await nativeDialog.accept();
-    });
-    await page.locator('.batch-toolbar .batch-btn[title="OCR Selected Pages"]').click();
+    await page.getByRole('button', { name: /OCR \d+ selected page/i }).click();
+    const dialog = page.getByRole('dialog', { name: /OCR selected pages/i });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(/Run OCR on \d+ selected pages?/);
+    await dialog.getByRole('button', { name: 'Run OCR', exact: true }).click();
+
     await expect(page.locator('.ocr-pill')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.ocr-pill')).toContainText(/Preparing OCR|Detecting language|Recognizing text|Processing OCR/);
 
     await page.locator('.ocr-pill-cancel[title="Cancel OCR"]').click();
     await expect(page.locator('.ocr-pill')).toContainText('OCR cancelled');
-    await expect(page.locator('.thumbnail-ocr-badge.skipped').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /OCR skipped/i }).first()).toBeVisible({ timeout: 10_000 });
 
     await page.screenshot({ path: testInfo.outputPath('selected-ocr-job-cancelled.png'), fullPage: true });
   });

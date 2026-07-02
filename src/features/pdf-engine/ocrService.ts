@@ -55,8 +55,8 @@ export class OCRService {
     }
 
     this.currentSingleLangs = langs;
-    this.singleInitPromise = (async () => {
-      const w = await createWorker(langs, 1, {
+    const initPromise = (async () => {
+      return createWorker(langs, 1, {
         ...this.WORKER_CONFIG,
         logger: m => {
           if (m.status === 'recognizing text' && this.onProgress) {
@@ -64,11 +64,24 @@ export class OCRService {
           }
         },
       });
-      this.singleWorker = w;
-      return w;
     })();
+    this.singleInitPromise = initPromise;
 
-    return this.singleInitPromise;
+    try {
+      const worker = await initPromise;
+      if (this.singleInitPromise !== initPromise || this.currentSingleLangs !== langs) {
+        await worker.terminate();
+        throw new Error('Stale OCR worker initialization was superseded.');
+      }
+      this.singleWorker = worker;
+      return worker;
+    } catch (err) {
+      if (this.singleInitPromise === initPromise) {
+        this.singleInitPromise = null;
+        this.singleWorker = null;
+      }
+      throw err;
+    }
   }
 
   private static async getScheduler(langs: string = 'eng') {
@@ -81,18 +94,32 @@ export class OCRService {
     }
 
     this.currentSchedulerLangs = langs;
-    this.schedulerInitPromise = (async () => {
+    const initPromise = (async () => {
       const sched = createScheduler();
       const promises = Array.from({ length: this.POOL_SIZE }, async () => {
         const w = await createWorker(langs, 1, this.WORKER_CONFIG);
         sched.addWorker(w);
       });
       await Promise.all(promises);
-      this.scheduler = sched;
       return sched;
     })();
+    this.schedulerInitPromise = initPromise;
 
-    return this.schedulerInitPromise;
+    try {
+      const scheduler = await initPromise;
+      if (this.schedulerInitPromise !== initPromise || this.currentSchedulerLangs !== langs) {
+        await scheduler.terminate();
+        throw new Error('Stale OCR scheduler initialization was superseded.');
+      }
+      this.scheduler = scheduler;
+      return scheduler;
+    } catch (err) {
+      if (this.schedulerInitPromise === initPromise) {
+        this.schedulerInitPromise = null;
+        this.scheduler = null;
+      }
+      throw err;
+    }
   }
 
   static async preInitialize() {

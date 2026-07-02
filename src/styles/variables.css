@@ -13,12 +13,18 @@
   --text-primary: #f0f2f5;
   --text-secondary: #a0a4ab;
   
-  --accent-color: #6366f1; /* Indigo */
-  --accent-hover: #4f46e5;
-  --accent-glow: rgba(99, 102, 241, 0.4);
+  --accent-color: #4f46e5; /* Indigo */
+  --accent-hover: #4338ca;
+  --accent-glow: rgba(79, 70, 229, 0.4);
 
   --danger-color: #ef4444;
   --danger-hover: #dc2626;
+  --warning-color: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.12);
+  --success-color: #22c55e;
+  --success-soft: rgba(34, 197, 94, 0.12);
+  --info-color: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.12);
 
   --border-radius-sm: 8px;
   --border-radius-md: 12px;

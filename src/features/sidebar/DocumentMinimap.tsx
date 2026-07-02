@@ -4,6 +4,8 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import { getMinimapPageIndexFromPoint, getMinimapViewport } from './minimapMath';
 import './Minimap.css';
 
+const clamp = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
+
 interface DocumentMinimapProps {
   /** Height of the sidebar list area, for the viewport indicator */
   listHeight: number;
@@ -44,6 +46,8 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
     listScrollOffset: scrollOffset,
     listTotalHeight: totalScrollHeight,
   });
+  const activeIndex = pages.findIndex(p => p.id === activePageId);
+  const activePageNumber = activeIndex >= 0 ? activeIndex + 1 : 1;
 
   // Sticky Scroll Logic: Keep the indicator within the minimap's visible area
   useEffect(() => {
@@ -86,8 +90,6 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
     ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
     ctx.clearRect(0, 0, CANVAS_WIDTH, totalHeight);
 
-    const activeIndex = pages.findIndex(p => p.id === activePageId);
-
     pages.forEach((page, i) => {
       const y = i * (PAGE_LINE_HEIGHT + GAP);
       const isActive = i === activeIndex;
@@ -106,7 +108,7 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
       ctx.roundRect(2, y, CANVAS_WIDTH - 4, PAGE_LINE_HEIGHT, 1);
       ctx.fill();
     });
-  }, [pages, activePageId, selectedPageIds, totalHeight]);
+  }, [pages, activeIndex, selectedPageIds, totalHeight]);
 
   const scrollToClientY = useCallback((clientY: number) => {
     const el = containerRef.current;
@@ -142,6 +144,36 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
     setIsDragging(false);
   }, []);
 
+  const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
+    const moveTo = (pageIndex: number) => {
+      event.preventDefault();
+      onScrollTo(clamp(pageIndex, 0, pages.length - 1));
+    };
+
+    switch (event.key) {
+      case 'ArrowUp':
+      case 'ArrowLeft':
+        moveTo((activeIndex >= 0 ? activeIndex : 0) - 1);
+        break;
+      case 'ArrowDown':
+      case 'ArrowRight':
+        moveTo((activeIndex >= 0 ? activeIndex : 0) + 1);
+        break;
+      case 'PageUp':
+        moveTo((activeIndex >= 0 ? activeIndex : 0) - 10);
+        break;
+      case 'PageDown':
+        moveTo((activeIndex >= 0 ? activeIndex : 0) + 10);
+        break;
+      case 'Home':
+        moveTo(0);
+        break;
+      case 'End':
+        moveTo(pages.length - 1);
+        break;
+    }
+  }, [activeIndex, onScrollTo, pages.length]);
+
   useEffect(() => {
     if (isDragging) {
       const move = (e: MouseEvent) => scrollToClientY(e.clientY);
@@ -170,9 +202,19 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
           containerRef.current = el;
         }}
         className="document-minimap"
+        role="scrollbar"
+        tabIndex={0}
+        aria-label="Document page minimap"
+        aria-controls="sidebar-page-list"
+        aria-orientation="vertical"
+        aria-valuemin={1}
+        aria-valuemax={pages.length}
+        aria-valuenow={activePageNumber}
+        aria-valuetext={`Page ${activePageNumber} of ${pages.length}`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onKeyDown={handleKeyDown}
         onScroll={updateArrows}
       >
         <canvas ref={canvasRef} className="minimap-canvas" />

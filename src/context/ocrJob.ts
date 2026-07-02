@@ -1,4 +1,4 @@
-import { type PdfPageInfo } from '../features/pdf-engine/utils';
+import { isAnalysisOcrCandidate, type PdfPageInfo } from '../features/pdf-engine/utils';
 
 export type OcrJobPhase =
   | 'idle'
@@ -183,7 +183,7 @@ export const getOcrCandidatePages = (
     if (!requested.has(page.id)) return false;
     if (page.ocrStatus === 'running' || page.ocrStatus === 'queued') return false;
     if (options.force || options.includeTextPages) return true;
-    return page.analysis?.isScanned === true;
+    return isAnalysisOcrCandidate(page.analysis);
   });
 };
 
@@ -234,15 +234,20 @@ export const applyPageOcrResultForJob = (
     if (page.id !== update.pageId) return page;
 
     changed = true;
-    return {
-      ...page,
-      ocrResult: update.ocrResult,
-      ocrStatus: 'complete' as const,
+      return {
+        ...page,
+        nativeAnalysis: page.nativeAnalysis ?? page.analysis,
+        ocrResult: update.ocrResult,
+        ocrStatus: 'complete' as const,
       ocrError: undefined,
       analysis: {
         hasText: true,
         hasOCR: true,
         isScanned: false,
+        textHealth: 'hiddenOcr' as const,
+        textHealthReasons: ['ocr-result'],
+        textItemCount: update.ocrResult.items.length,
+        textSample: update.ocrResult.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim().slice(0, 500),
       },
       analysisStatus: 'complete' as const,
       analysisError: undefined,

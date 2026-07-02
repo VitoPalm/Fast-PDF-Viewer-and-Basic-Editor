@@ -1,27 +1,31 @@
 {
   "name": "fast-pdf-editor",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.5.1",
   "description": "A high-performance, premium PDF viewer and editor.",
   "author": "Vito Palmieri <vito@example.com>",
   "type": "module",
   "main": "dist-electron/main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && electron-builder --publish never",
+    "build:glyph-sidecar": "mvn -q -f native/glyph-repair/pom.xml package",
+    "build": "npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --publish never",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "version:sync:git": "node scripts/sync-version.mjs --from-git",
     "version:set": "node scripts/sync-version.mjs",
-    "package:dir": "npm run version:sync:git && tsc -b && vite build && electron-builder --dir --publish never",
+    "package:dir": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --dir --publish never -c.asar=false",
     "test:packaged": "npm run package:dir && playwright test --config=playwright.packaged.config.ts",
     "preview": "vite preview",
-    "electron:build": "npm run version:sync:git && vite build && electron-builder --publish always",
-    "electron:build:win": "npm run version:sync:git && vite build && electron-builder --win",
-    "electron:build:mac": "npm run version:sync:git && vite build && electron-builder --mac",
-    "electron:build:linux": "npm run version:sync:git && vite build && electron-builder --linux"
+    "electron:build": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --publish always",
+    "electron:build:win": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --win",
+    "electron:build:mac": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --mac",
+    "electron:build:linux": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --linux"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
@@ -73,6 +77,16 @@
     "files": [
       "dist",
       "dist-electron"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/@okathira/ghostpdl-wasm/dist/gs.wasm",
+        "to": "gs.wasm"
+      },
+      {
+        "from": "native/glyph-repair/target/glyph-repair.jar",
+        "to": "glyph-repair.jar"
+      }
     ],
     "mac": {
       "category": "public.app-category.productivity",
