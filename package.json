@@ -19,7 +19,7 @@
     "test:e2e": "playwright test",
     "version:sync:git": "node scripts/sync-version.mjs --from-git",
     "version:set": "node scripts/sync-version.mjs",
-    "package:dir": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --dir --publish never",
+    "package:dir": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --dir --publish never -c.asar=false",
     "test:packaged": "npm run package:dir && playwright test --config=playwright.packaged.config.ts",
     "preview": "vite preview",
     "electron:build": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --publish always",

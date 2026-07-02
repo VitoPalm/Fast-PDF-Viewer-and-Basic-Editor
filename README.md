@@ -96,7 +96,7 @@ Artifacts will be generated in the `release/` directory.
 
 ## 📄 License
 
-This project does not currently publish a single permissive project license. Distributed builds include `@okathira/ghostpdl-wasm`/GhostPDL components under AGPL-3.0-or-later for Clean OCR, and all third-party dependencies retain their own licenses.
+This project does not currently publish a single permissive project license. Distributed builds include `@okathira/ghostpdl-wasm`/GhostPDL components under AGPL-3.0-or-later for Clean OCR, and all third-party dependencies retain their own licenses. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 ---
 
