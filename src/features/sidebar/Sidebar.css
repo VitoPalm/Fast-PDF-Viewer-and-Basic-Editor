@@ -84,6 +84,7 @@
 .thumbnail-item {
   cursor: pointer;
   transition: background 0.15s ease;
+  outline: none;
 }
 
 .thumbnail-item-inner {
@@ -96,6 +97,7 @@
   padding: 8px;
   gap: 8px;
   transition: all 0.15s ease;
+  position: relative;
 }
 
 .thumbnail-item:hover .thumbnail-item-inner {
@@ -105,13 +107,29 @@
 
 .thumbnail-item.active .thumbnail-item-inner {
   background: rgba(99, 102, 241, 0.1);
-  border-color: var(--accent-color);
+  border-color: rgba(255, 255, 255, 0.14);
   box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
 }
 
+.thumbnail-item.active .thumbnail-item-inner::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent-color);
+}
+
 .thumbnail-item.selected .thumbnail-item-inner {
+  border-color: rgba(196, 181, 253, 0.7);
+  background: rgba(79, 70, 229, 0.12);
+}
+
+.thumbnail-item.active.selected .thumbnail-item-inner {
   border-color: var(--accent-color);
-  animation: pulseGlow 2s ease-in-out infinite;
+  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.55), 0 0 12px rgba(79, 70, 229, 0.18);
 }
 
 .thumbnail-item.dragging .thumbnail-item-inner {
@@ -136,6 +154,11 @@
 
 .thumbnail-item:hover .drag-handle {
   opacity: 1;
+}
+
+.thumbnail-item:focus-within .thumbnail-item-inner {
+  border-color: #c4b5fd;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.28);
 }
 
 .thumbnail-canvas-wrapper {
@@ -184,13 +207,32 @@
   overflow: hidden;
 }
 
+.thumbnail-open-button {
+  width: 100%;
+  display: block;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.thumbnail-open-button:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
+}
+
 .thumbnail-page-num {
+  display: block;
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .thumbnail-doc-name {
+  display: block;
   font-size: 0.68rem;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -199,17 +241,32 @@
   margin-top: 2px;
 }
 
-.thumbnail-check {
+.thumbnail-select-toggle {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--accent-color);
-  color: white;
+  border: 1px solid var(--surface-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.thumbnail-select-toggle.selected {
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+  color: white;
   animation: fadeIn 0.15s ease;
+}
+
+.thumbnail-select-toggle:hover {
+  border-color: var(--accent-color);
+  background: rgba(79, 70, 229, 0.14);
+  color: var(--text-primary);
 }
 
 .thumbnail-ocr-badge {
@@ -306,7 +363,8 @@
   flex-shrink: 0;
 }
 
-.thumbnail-item:hover .thumbnail-remove {
+.thumbnail-item:hover .thumbnail-remove,
+.thumbnail-item:focus-within .thumbnail-remove {
   opacity: 0.6;
 }
 
@@ -321,7 +379,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
+  gap: 8px;
+  padding: 8px 10px;
   border-top: 1px solid var(--surface-border);
   background: rgba(99, 102, 241, 0.06);
   backdrop-filter: blur(12px);
@@ -338,16 +397,21 @@
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--accent-color);
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .batch-toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
+  min-width: 0;
 }
 
 .batch-btn {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   border: 1px solid var(--surface-border);
   background: var(--surface-color);

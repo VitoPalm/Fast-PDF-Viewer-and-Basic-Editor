@@ -49,7 +49,7 @@ test.describe('Batch 3 OCR jobs', () => {
 
     await expect(page.locator('.batch-toolbar-count')).toContainText('selected');
     page.once('dialog', async nativeDialog => {
-      expect(nativeDialog.message()).toMatch(/Run OCR on \d+ pages\?/);
+      expect(nativeDialog.message()).toMatch(/Run OCR on \d+ pages?\?/);
       await nativeDialog.accept();
     });
     await page.locator('.batch-toolbar .batch-btn[title="OCR Selected Pages"]').click();

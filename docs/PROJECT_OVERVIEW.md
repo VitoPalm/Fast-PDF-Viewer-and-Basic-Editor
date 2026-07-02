@@ -74,9 +74,13 @@ pages.
 
 ## Immediate Engineering Priorities
 
-1. Block unsafe destructive operations from invalid ranges.
-2. Fix sidebar/minimap sync and virtualized reorder behavior.
-3. Narrow and type the Electron/native bridge.
-4. Add text-layer health diagnostics before glyph repair.
-5. Resolve release, licensing, and bundled asset strategy before public binary
+1. Treat 1.5.1 as the stabilized desktop baseline for native OCR and text
+   health.
+2. Preserve the 1.5.0 native bridge and text-health behavior through regression
+   checks.
+3. Decide whether fit-to-width/default zoom polish should land before glyph
+   repair.
+4. Resolve release, licensing, and bundled asset strategy before public binary
    distribution.
+5. Move into deterministic glyph text repair once the stabilized desktop
+   workflows remain green.

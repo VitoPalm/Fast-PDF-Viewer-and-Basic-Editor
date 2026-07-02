@@ -59,6 +59,22 @@ describe('import job state', () => {
 
     expect(job.phase).toBe('cancelled');
   });
+
+  it('can restart analysis for restored pending pages without file loading progress', () => {
+    const job = importJobReducer(createIdleImportJob(), {
+      type: 'analysis-only-started',
+      jobId: 5,
+      pagesTotal: 3,
+    });
+
+    expect(job).toMatchObject({
+      id: 5,
+      phase: 'analyzing',
+      pagesTotal: 3,
+      pagesInstantiated: 3,
+      filesTotal: 0,
+    });
+  });
 });
 
 describe('import page helpers', () => {

@@ -21,10 +21,16 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Lint
         run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Typecheck
+        run: npx tsc -b --pretty false
 
       - name: Build Test
         run: npm run build

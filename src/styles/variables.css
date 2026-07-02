@@ -13,9 +13,9 @@
   --text-primary: #f0f2f5;
   --text-secondary: #a0a4ab;
   
-  --accent-color: #6366f1; /* Indigo */
-  --accent-hover: #4f46e5;
-  --accent-glow: rgba(99, 102, 241, 0.4);
+  --accent-color: #4f46e5; /* Indigo */
+  --accent-hover: #4338ca;
+  --accent-glow: rgba(79, 70, 229, 0.4);
 
   --danger-color: #ef4444;
   --danger-hover: #dc2626;

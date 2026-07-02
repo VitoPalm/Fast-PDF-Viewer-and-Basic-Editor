@@ -1,7 +1,7 @@
 import React, { useState, useCallback, type ReactNode, useEffect, useRef, useReducer } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument, analyzePage } from '../features/pdf-engine/utils';
-import { type TextAnnotation } from '../shared/types/pdf';
+import { type PageMutationConfirmOptions, type TextAnnotation } from '../shared/types/pdf';
 import { OCRService } from '../features/pdf-engine/ocrService';
 import { detectLanguage } from '../features/pdf-engine/languageDetector';
 import {
@@ -79,9 +79,21 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const activePageIdRef = useRef<string | null>(activePageId);
   const documentsRef = useRef(documents);
   const pagesRef = useRef(pages);
+  const selectedPageIdsRef = useRef(selectedPageIds);
+  const rangeInputRef = useRef(rangeInput);
+  const importJobRef = useRef(importJob);
+  const restartAnalysisRef = useRef<(
+    restoredPages: PdfPageInfo[],
+    restoredDocuments: Record<string, PdfDocumentInfo>,
+    restoredActivePageId: string | null,
+  ) => void>(() => {});
   const currentImportJobIdRef = useRef(0);
   const currentOcrJobIdRef = useRef(0);
   const ocrCancelRef = useRef(false);
+  const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
+  const undoButtonRef = useRef<HTMLButtonElement | null>(null);
+  const pausedUndoRemainingMsRef = useRef<number | null>(null);
+  const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
 
   const isLoading = isImportJobBusy(importJob) || isOcrJobBusy(ocrJob);
 
@@ -107,6 +119,24 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     pagesRef.current = pages;
   }, [pages]);
+
+  useEffect(() => {
+    selectedPageIdsRef.current = selectedPageIds;
+  }, [selectedPageIds]);
+
+  useEffect(() => {
+    rangeInputRef.current = rangeInput;
+  }, [rangeInput]);
+
+  useEffect(() => {
+    importJobRef.current = importJob;
+  }, [importJob]);
+
+  useEffect(() => {
+    if (confirmRequest) {
+      window.setTimeout(() => cancelButtonRef.current?.focus(), 0);
+    }
+  }, [confirmRequest]);
 
   const isImportJobCurrent = useCallback((jobId: number) => (
     currentImportJobIdRef.current === jobId
@@ -322,8 +352,15 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
 
       const error = getErrorMessage(err);
+      const failedIds = targetIds.filter(pageId => {
+        const page = pagesRef.current.find(candidate => candidate.id === pageId);
+        return page?.ocrStatus !== 'complete';
+      });
+      failedIds.forEach(pageId => {
+        dispatchOcrJob({ type: 'page-failed', jobId, pageId, error });
+      });
       dispatchOcrJob({ type: 'failed', jobId, error });
-      setPages(prev => prev.map(page => targetIds.includes(page.id) && page.ocrStatus === 'queued' ? {
+      setPages(prev => prev.map(page => failedIds.includes(page.id) ? {
         ...page,
         ocrStatus: 'failed',
         ocrError: error,
@@ -349,20 +386,61 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const startUndoTimer = useCallback((nextUndo: PendingUndoState) => {
     clearUndoTimer();
+    pausedUndoRemainingMsRef.current = null;
     setPendingUndoState(nextUndo);
+    const timeoutMs = Math.max(nextUndo.expiresAt - Date.now(), 0);
     undoTimerRef.current = window.setTimeout(() => {
       setPendingUndoState(null);
       undoTimerRef.current = null;
-    }, UNDO_TIMEOUT_MS);
+    }, timeoutMs);
+    window.setTimeout(() => undoButtonRef.current?.focus(), 0);
   }, [clearUndoTimer]);
 
+  const pauseUndoTimer = useCallback(() => {
+    if (!pendingUndoState || undoTimerRef.current === null) return;
+
+    pausedUndoRemainingMsRef.current = Math.max(pendingUndoState.expiresAt - Date.now(), 0);
+    window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = null;
+  }, [pendingUndoState]);
+
+  const resumePausedUndoTimer = useCallback(() => {
+    const remainingMs = pausedUndoRemainingMsRef.current;
+    if (remainingMs === null || !pendingUndoState) return;
+
+    pausedUndoRemainingMsRef.current = null;
+    startUndoTimer({
+      ...pendingUndoState,
+      expiresAt: Date.now() + remainingMs,
+    });
+  }, [pendingUndoState, startUndoTimer]);
+
+  const closeConfirmDialog = useCallback(() => {
+    setConfirmRequest(null);
+    resumePausedUndoTimer();
+    window.setTimeout(() => confirmReturnFocusRef.current?.focus(), 0);
+  }, [resumePausedUndoTimer]);
+
+  useEffect(() => {
+    if (!confirmRequest) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      closeConfirmDialog();
+    };
+
+    window.addEventListener('keydown', handleEscape, true);
+    return () => window.removeEventListener('keydown', handleEscape, true);
+  }, [closeConfirmDialog, confirmRequest]);
+
   const captureSnapshot = useCallback((): PageStateSnapshot => ({
-    documents,
-    pages,
-    activePageId,
-    selectedPageIds: new Set(selectedPageIds),
-    rangeInput,
-  }), [activePageId, documents, pages, rangeInput, selectedPageIds]);
+    documents: documentsRef.current,
+    pages: pagesRef.current,
+    activePageId: activePageIdRef.current,
+    selectedPageIds: new Set(selectedPageIdsRef.current),
+    rangeInput: rangeInputRef.current,
+  }), []);
 
   const applyMutationResult = useCallback((result: PageMutationResult) => {
     if (result.documents) setDocuments(result.documents);
@@ -372,13 +450,67 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRangeInput(result.rangeInput);
   }, []);
 
+  const mergeRuntimePageState = useCallback((snapshotPage: PdfPageInfo, currentPage: PdfPageInfo | undefined): PdfPageInfo => {
+    if (!currentPage) return snapshotPage;
+
+    return {
+      ...snapshotPage,
+      analysis: currentPage.analysis ?? snapshotPage.analysis,
+      analysisStatus: currentPage.analysisStatus ?? snapshotPage.analysisStatus,
+      analysisError: currentPage.analysisError,
+      ocrStatus: currentPage.ocrStatus ?? snapshotPage.ocrStatus,
+      ocrError: currentPage.ocrError,
+      ocrResult: currentPage.ocrResult ?? snapshotPage.ocrResult,
+    };
+  }, []);
+
+  const normalizeRestoredPageState = useCallback((restoredPages: PdfPageInfo[]): PdfPageInfo[] => (
+    restoredPages.map(page => ({
+      ...page,
+      analysisStatus: page.analysisStatus === 'running' ? 'pending' : page.analysisStatus,
+      analysisError: page.analysisStatus === 'running' ? undefined : page.analysisError,
+      ocrStatus: page.ocrStatus === 'queued' || page.ocrStatus === 'running' ? 'skipped' : page.ocrStatus,
+      ocrError: page.ocrStatus === 'queued' || page.ocrStatus === 'running'
+        ? 'OCR was cancelled before undo restored this page.'
+        : page.ocrError,
+    }))
+  ), []);
+
+  const buildRebasedUndoSnapshot = useCallback((snapshot: PageStateSnapshot): PageStateSnapshot => {
+    const currentPages = pagesRef.current;
+    const currentPageById = new Map(currentPages.map(page => [page.id, page]));
+    const snapshotPageIds = new Set(snapshot.pages.map(page => page.id));
+    const restoredSnapshotPages = snapshot.pages.map(page => mergeRuntimePageState(page, currentPageById.get(page.id)));
+    const currentOnlyPages = currentPages.filter(page => !snapshotPageIds.has(page.id));
+    const restoredPages = normalizeRestoredPageState([...restoredSnapshotPages, ...currentOnlyPages]);
+    const validPageIds = new Set(restoredPages.map(page => page.id));
+
+    return {
+      documents: { ...snapshot.documents, ...documentsRef.current },
+      pages: restoredPages,
+      activePageId: snapshot.activePageId && validPageIds.has(snapshot.activePageId)
+        ? snapshot.activePageId
+        : restoredPages[0]?.id ?? null,
+      selectedPageIds: new Set(
+        Array.from(snapshot.selectedPageIds).filter(pageId => validPageIds.has(pageId)),
+      ),
+      rangeInput: snapshot.rangeInput,
+    };
+  }, [mergeRuntimePageState, normalizeRestoredPageState]);
+
   const requestConfirmedPageMutation = useCallback((
-    request: Omit<ConfirmRequest, 'onConfirm'> & { undoDescription: string; beforeApply?: () => void },
+    request: Omit<ConfirmRequest, 'onConfirm'> & { undoDescription: string; beforeApply?: () => void; allowDuringImport?: boolean },
     buildResult: (snapshot: PageStateSnapshot) => PageMutationResult | null,
   ) => {
-    const snapshot = captureSnapshot();
-    const result = buildResult(snapshot);
-    if (!result) return;
+    if (isImportJobBusy(importJobRef.current) && !request.allowDuringImport) {
+      alert('Wait for the current import to finish before changing pages.');
+      return;
+    }
+
+    confirmReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    pauseUndoTimer();
 
     setConfirmRequest({
       title: request.title,
@@ -386,7 +518,12 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       confirmLabel: request.confirmLabel,
       danger: request.danger,
       onConfirm: () => {
+        const snapshot = captureSnapshot();
+        const result = buildResult(snapshot);
         setConfirmRequest(null);
+        pausedUndoRemainingMsRef.current = null;
+        if (!result) return;
+
         request.beforeApply?.();
         applyMutationResult(result);
         startUndoTimer({
@@ -396,12 +533,17 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
       },
     });
-  }, [applyMutationResult, captureSnapshot, startUndoTimer]);
+  }, [applyMutationResult, captureSnapshot, pauseUndoTimer, startUndoTimer]);
 
   const commitImmediatePageMutation = useCallback((
     undoDescription: string,
     buildResult: (snapshot: PageStateSnapshot) => PageMutationResult | null,
   ) => {
+    if (isImportJobBusy(importJobRef.current)) {
+      alert('Wait for the current import to finish before changing pages.');
+      return;
+    }
+
     const snapshot = captureSnapshot();
     const result = buildResult(snapshot);
     if (!result) return;
@@ -417,13 +559,18 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const undoLastPageMutation = useCallback(() => {
     if (!pendingUndoState) return;
     clearUndoTimer();
-    setDocuments(pendingUndoState.snapshot.documents);
-    setPages(pendingUndoState.snapshot.pages);
-    setActivePageId(pendingUndoState.snapshot.activePageId);
-    setSelectedPageIds(new Set(pendingUndoState.snapshot.selectedPageIds));
-    setRangeInput(pendingUndoState.snapshot.rangeInput);
+    pausedUndoRemainingMsRef.current = null;
+    setConfirmRequest(null);
+
+    const rebasedSnapshot = buildRebasedUndoSnapshot(pendingUndoState.snapshot);
+    setDocuments(rebasedSnapshot.documents);
+    setPages(rebasedSnapshot.pages);
+    setActivePageId(rebasedSnapshot.activePageId);
+    setSelectedPageIds(new Set(rebasedSnapshot.selectedPageIds));
+    setRangeInput(rebasedSnapshot.rangeInput);
     setPendingUndoState(null);
-  }, [clearUndoTimer, pendingUndoState]);
+    restartAnalysisRef.current(rebasedSnapshot.pages, rebasedSnapshot.documents, rebasedSnapshot.activePageId);
+  }, [buildRebasedUndoSnapshot, clearUndoTimer, pendingUndoState]);
 
   const addAnnotation = useCallback((annot: TextAnnotation) => {
     setAnnotations(prev => [...prev, annot]);
@@ -496,8 +643,41 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [getErrorMessage, isImportJobCurrent, updateAnalysisForImportJob]);
 
+  useEffect(() => {
+    restartAnalysisRef.current = (
+      restoredPages: PdfPageInfo[],
+      restoredDocuments: Record<string, PdfDocumentInfo>,
+      restoredActivePageId: string | null,
+    ) => {
+      const pagesToAnalyze = restoredPages.filter(page => (
+        page.analysisStatus === 'pending' ||
+        page.analysisStatus === 'running'
+      ));
+      if (pagesToAnalyze.length === 0) return;
+
+      const jobId = currentImportJobIdRef.current + 1;
+      currentImportJobIdRef.current = jobId;
+      dispatchImportJob({ type: 'analysis-only-started', jobId, pagesTotal: pagesToAnalyze.length });
+
+      const pageIdsToAnalyze = new Set(pagesToAnalyze.map(page => page.id));
+      setPages(prev => prev.map(page => pageIdsToAnalyze.has(page.id) ? {
+        ...page,
+        analysisStatus: 'pending',
+        analysisError: undefined,
+      } : page));
+
+      void analyzeImportedPages(
+        jobId,
+        pagesToAnalyze.map(page => ({ ...page, analysisStatus: 'pending' as const, analysisError: undefined })),
+        restoredDocuments,
+        restoredActivePageId,
+      );
+    };
+  }, [analyzeImportedPages]);
+
   const addFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
+    if (isImportJobBusy(importJobRef.current)) return;
 
     const jobId = currentImportJobIdRef.current + 1;
     currentImportJobIdRef.current = jobId;
@@ -655,13 +835,13 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [pages, requestConfirmedPageMutation]);
 
-  const removePagesWithUndo = useCallback((ids: string[]) => {
+  const removePagesWithUndo = useCallback((ids: string[], options?: PageMutationConfirmOptions) => {
     const idSet = new Set(ids);
     const affectedCount = pages.filter(page => idSet.has(page.id)).length;
     if (affectedCount === 0) return;
 
     requestConfirmedPageMutation({
-      title: 'Remove selected pages?',
+      title: options?.title ?? 'Remove selected pages?',
       message: `Remove ${affectedCount} page${affectedCount === 1 ? '' : 's'}? You can undo this for a few seconds.`,
       confirmLabel: 'Remove',
       danger: true,
@@ -675,18 +855,18 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pages: nextPages,
         activePageId: getNextActivePageId(snapshot.pages, nextPages, snapshot.activePageId),
         selectedPageIds: nextSelected,
-        rangeInput: snapshot.rangeInput,
+        rangeInput: options?.nextRangeInput ?? snapshot.rangeInput,
       };
     });
   }, [pages, requestConfirmedPageMutation]);
 
-  const keepOnlyPagesWithUndo = useCallback((ids: string[]) => {
+  const keepOnlyPagesWithUndo = useCallback((ids: string[], options?: PageMutationConfirmOptions) => {
     const idSet = new Set(ids);
     const keptCount = pages.filter(page => idSet.has(page.id)).length;
     if (keptCount === 0 || keptCount === pages.length) return;
 
     requestConfirmedPageMutation({
-      title: 'Keep only these pages?',
+      title: options?.title ?? 'Keep only these pages?',
       message: `Keep ${keptCount} page${keptCount === 1 ? '' : 's'} and remove ${pages.length - keptCount}? You can undo this for a few seconds.`,
       confirmLabel: 'Keep only',
       danger: true,
@@ -698,7 +878,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pages: nextPages,
         activePageId: getNextActivePageId(snapshot.pages, nextPages, snapshot.activePageId),
         selectedPageIds: new Set(),
-        rangeInput: snapshot.rangeInput,
+        rangeInput: options?.nextRangeInput ?? snapshot.rangeInput,
       };
     });
   }, [pages, requestConfirmedPageMutation]);
@@ -716,6 +896,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cancelImport();
         cancelOcr();
       },
+      allowDuringImport: true,
     }, () => ({
       documents: {},
       pages: [],
@@ -809,6 +990,37 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, []);
 
+  const handleConfirmDialogKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeConfirmDialog();
+      return;
+    }
+
+    if (event.key !== 'Tab') return;
+
+    const focusableElements = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter(element => element.offsetParent !== null);
+
+    if (focusableElements.length === 0) return;
+
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault();
+      lastElement.focus();
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault();
+      firstElement.focus();
+    }
+  }, [closeConfirmDialog]);
+
   return (
     <PdfContext.Provider value={{
       documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob, ocrJob,
@@ -833,11 +1045,13 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             role="dialog"
             aria-modal="true"
             aria-labelledby="confirm-dialog-title"
+            aria-describedby="confirm-dialog-description"
+            onKeyDown={handleConfirmDialogKeyDown}
           >
             <h2 id="confirm-dialog-title">{confirmRequest.title}</h2>
-            <p>{confirmRequest.message}</p>
+            <p id="confirm-dialog-description">{confirmRequest.message}</p>
             <div className="confirm-actions">
-              <button className="confirm-secondary" onClick={() => setConfirmRequest(null)}>
+              <button ref={cancelButtonRef} className="confirm-secondary" onClick={closeConfirmDialog}>
                 Cancel
               </button>
               <button
@@ -850,10 +1064,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           </div>
         </div>
       )}
-      {pendingUndoState && (
+      {pendingUndoState && !confirmRequest && (
         <div className="undo-toast" role="status" aria-live="polite">
           <span>{pendingUndoState.description}</span>
-          <button onClick={undoLastPageMutation}>Undo</button>
+          <button ref={undoButtonRef} onClick={undoLastPageMutation}>Undo</button>
         </div>
       )}
     </PdfContext.Provider>

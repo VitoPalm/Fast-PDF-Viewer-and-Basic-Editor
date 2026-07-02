@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { UploadCloud, FileText } from 'lucide-react';
 import clsx from 'clsx';
-import { getImportJobProgress, isImportJobVisible, type ImportJob } from '../../context/importJob';
+import { getImportJobProgress, isImportJobBusy, isImportJobVisible, type ImportJob } from '../../context/importJob';
 import './UploadScreen.css';
 
 interface UploadScreenProps {
@@ -29,6 +29,7 @@ const formatUploadImportStatus = (job: ImportJob): string => {
 export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob }) => {
   const [isDragging, setIsDragging] = useState(false);
   const showImportProgress = isImportJobVisible(importJob);
+  const isImportRunning = isImportJobBusy(importJob);
   const importProgress = getImportJobProgress(importJob);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -46,23 +47,23 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob 
     e.stopPropagation();
     setIsDragging(false);
     
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    if (!isImportRunning && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf');
       if (files.length > 0) {
         onUpload(files);
       }
     }
-  }, [onUpload]);
+  }, [isImportRunning, onUpload]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
-    if (e.target.files && e.target.files.length > 0) {
+    if (!isImportRunning && e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files).filter(f => f.type === 'application/pdf');
       if (files.length > 0) {
         onUpload(files);
       }
     }
-  }, [onUpload]);
+  }, [isImportRunning, onUpload]);
 
   return (
     <div className="app-container" style={{ alignItems: 'center', justifyContent: 'center', background: 'var(--bg-gradient)' }}>
@@ -85,6 +86,8 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob 
 
         <label 
           className={clsx('dropzone', { 'active': isDragging })}
+          data-disabled={isImportRunning ? 'true' : undefined}
+          aria-disabled={isImportRunning}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
@@ -94,22 +97,33 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob 
             type="file" 
             multiple 
             accept="application/pdf" 
-            style={{ display: 'none' }} 
+            className="dropzone-input"
+            aria-label="Select PDF files"
+            disabled={isImportRunning}
             onChange={handleChange}
           />
           <UploadCloud className="dropzone-icon" />
-          <h3 style={{ marginBottom: '8px' }}>Drag & drop PDFs here</h3>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '16px' }}>or click to browse files</p>
-          <div className="btn btn-primary">
+          <h3 style={{ marginBottom: '8px' }}>{isImportRunning ? 'Import in progress' : 'Drag & drop PDFs here'}</h3>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '16px' }}>
+            {isImportRunning ? 'You can add more PDFs after this import finishes.' : 'or click to browse files'}
+          </p>
+          <span className="btn btn-primary">
             <FileText size={18} /> Select PDF Files
-          </div>
+          </span>
           {showImportProgress && (
-            <div className="upload-progress" data-testid="upload-import-progress">
+            <div className="upload-progress" data-testid="upload-import-progress" role="status" aria-live="polite">
               <div className="upload-progress-label">
                 <span>{formatUploadImportStatus(importJob)}</span>
                 <span>{importProgress}%</span>
               </div>
-              <div className="upload-progress-bar" aria-hidden="true">
+              <div
+                className="upload-progress-bar"
+                role="progressbar"
+                aria-label="PDF import progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={importProgress}
+              >
                 <div style={{ width: `${importProgress}%` }} />
               </div>
             </div>

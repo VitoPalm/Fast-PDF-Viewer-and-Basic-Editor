@@ -29,6 +29,16 @@ const healthyAnalysis: PageAnalysis = {
   textSample: 'Readable page text',
 };
 
+const suspectAnalysis: PageAnalysis = {
+  hasText: true,
+  hasOCR: false,
+  isScanned: false,
+  textHealth: 'suspectEncoding',
+  textHealthReasons: ['replacement-characters'],
+  textItemCount: 24,
+  textSample: 'Broken text',
+};
+
 const pages: PdfPageInfo[] = [
   {
     id: 'scanned',
@@ -48,6 +58,12 @@ const pages: PdfPageInfo[] = [
     originalPageIndex: 3,
     analysis: scannedAnalysis,
     ocrStatus: 'running',
+  },
+  {
+    id: 'suspect',
+    docId: 'doc',
+    originalPageIndex: 4,
+    analysis: suspectAnalysis,
   },
 ];
 
@@ -106,6 +122,10 @@ describe('ocr job state', () => {
 describe('ocr page helpers', () => {
   it('selects scanned pages by default and excludes pages already in progress', () => {
     expect(getOcrCandidatePages(pages, ['scanned', 'text', 'running']).map(page => page.id)).toEqual(['scanned']);
+  });
+
+  it('selects suspect text pages as OCR fallback candidates', () => {
+    expect(getOcrCandidatePages(pages, ['suspect']).map(page => page.id)).toEqual(['suspect']);
   });
 
   it('includes text pages when explicitly requested', () => {

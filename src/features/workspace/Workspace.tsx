@@ -7,10 +7,12 @@ import {
   cleanOcrFromPage,
   cleanOcrUnavailableMessage,
   exportModifiedPdf,
+  isAnalysisOcrCandidate,
+  isNativeHiddenOcrAnalysis,
   type PageAnalysis,
 } from '../pdf-engine/utils';
 import { OCRHint } from './OCRHint';
-import { getImportJobProgress, isImportJobVisible, type ImportJob } from '../../context/importJob';
+import { getImportJobProgress, isImportJobBusy, isImportJobVisible, type ImportJob } from '../../context/importJob';
 import { getOcrJobProgress, isOcrJobBusy, isOcrJobVisible, type OcrJob } from '../../context/ocrJob';
 import { isSuspectTextHealth } from '../pdf-engine/textLayerHealth';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -50,6 +52,50 @@ const formatOcrStatus = (job: OcrJob): string => {
   }
 };
 
+const formatCount = (count: number, singular: string, plural = `${singular}s`): string => (
+  `${count} ${count === 1 ? singular : plural}`
+);
+
+const formatTextHealthReason = (reason: string): string => reason.replace(/-/g, ' ');
+
+const textHealthCopy = (analysis: PageAnalysis): { message: string; detail: string } => {
+  if (analysis.textHealth === 'unsupported') {
+    return {
+      message: 'Text extraction failed for this page. Native selection is disabled.',
+      detail: 'Export keeps the original page. OCR can add a searchable layer without replacing the page artwork.',
+    };
+  }
+
+  const reason = analysis.textHealthReasons[0]
+    ? ` Reason: ${formatTextHealthReason(analysis.textHealthReasons[0])}.`
+    : '';
+  return {
+    message: 'Text extraction looks corrupted. Native selection is disabled to avoid copying bad text.',
+    detail: `Export keeps the original page.${reason}`,
+  };
+};
+
+const ocrHintCopy = (analysis: PageAnalysis | null): { title: string; description: string } => {
+  if (analysis?.textHealth === 'suspectEncoding') {
+    return {
+      title: 'Text Selection Disabled',
+      description: 'This page has corrupted selectable text. OCR can add a searchable fallback layer while preserving the original page.',
+    };
+  }
+
+  if (analysis?.textHealth === 'unsupported') {
+    return {
+      title: 'Text Extraction Failed',
+      description: 'The native text layer could not be read. OCR can add searchable text while preserving the original page.',
+    };
+  }
+
+  return {
+    title: 'Scan Detected',
+    description: 'This page appears to be a scan. Use OCR to make text searchable and selectable.',
+  };
+};
+
 export const Workspace: React.FC = () => {
   const {
     pages, activePageId, setActivePageId, documents,
@@ -70,7 +116,7 @@ export const Workspace: React.FC = () => {
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const textLayerRef = useRef<HTMLDivElement>(null);
-  const [showOcrHint, setShowOcrHint] = useState(true);
+  const [dismissedOcrHintPageIds, setDismissedOcrHintPageIds] = useState<Set<string>>(new Set());
   const [debugTextLayer, setDebugTextLayer] = useState(false);
   const [pageAnalysis, setPageAnalysis] = useState<PageAnalysis | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
@@ -80,6 +126,7 @@ export const Workspace: React.FC = () => {
   const pageInputRef = useRef<HTMLInputElement>(null);
 
   const isOcrRunning = isOcrJobBusy(ocrJob);
+  const isImportRunning = isImportJobBusy(importJob);
 
   const activePage = pages.find(p => p.id === activePageId);
   const activeIndex = pages.findIndex(p => p.id === activePageId);
@@ -118,9 +165,10 @@ export const Workspace: React.FC = () => {
           };
         }
         setPageAnalysis(analysis);
-        const shouldRenderNativeTextLayer = !activePage.ocrResult && (
-          !analysis || !isSuspectTextHealth(analysis.textHealth)
-        );
+        const shouldRenderNativeTextLayer = !activePage.ocrResult &&
+          activePage.analysisStatus === 'complete' &&
+          analysis !== null &&
+          !isSuspectTextHealth(analysis.textHealth);
 
         const bitmap = await requestPage(activePage.docId, docInfo.pdfjsDoc, activePage.originalPageIndex, scale, 'urgent');
         if (cancelled || !canvasRef.current) return;
@@ -138,12 +186,15 @@ export const Workspace: React.FC = () => {
 
         // Render native PDF.js Text Layer (only for pages WITHOUT OCR results)
         // OCR results are rendered by React JSX in a separate container
-        if (textLayerRef.current) {
-          textLayerRef.current.innerHTML = '';
-          textLayerRef.current.style.width = `${canvas.width}px`;
-          textLayerRef.current.style.height = `${canvas.height}px`;
+        const textLayerContainer = textLayerRef.current;
+        if (textLayerContainer) {
+          textLayerContainer.innerHTML = '';
+          textLayerContainer.style.width = `${canvas.width}px`;
+          textLayerContainer.style.height = `${canvas.height}px`;
           if (shouldRenderNativeTextLayer) {
             const textContent = await page.getTextContent();
+            if (cancelled || !textLayerRef.current) return;
+
             const textLayer = new pdfjsLib.TextLayer({
               textContentSource: textContent,
               container: textLayerRef.current,
@@ -158,7 +209,6 @@ export const Workspace: React.FC = () => {
       }
     };
     render();
-    setShowOcrHint(true);
     return () => { cancelled = true; };
   }, [activePage, docInfo, scale, requestPage]);
 
@@ -178,6 +228,7 @@ export const Workspace: React.FC = () => {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (isEditingPageNum) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); goPrev(); }
@@ -301,21 +352,25 @@ export const Workspace: React.FC = () => {
 
   const handleOCR = async () => {
     if (!activePage || isOcrRunning) return;
-    setShowOcrHint(false);
+    setDismissedOcrHintPageIds(prev => new Set(prev).add(activePage.id));
     await startOcr([activePage.id], { mode: 'single', force: true });
   };
 
   const handleBatchOCR = () => {
     if (isOcrRunning) return;
-    const scannedIds = pages.filter(p => p.analysis?.isScanned === true).map(p => p.id);
-    const hasTextIds = pages.filter(p => p.analysis?.isScanned === false).map(p => p.id);
+    const candidateIds = pages.filter(p => isAnalysisOcrCandidate(p.analysis)).map(p => p.id);
+    const healthyTextIds = pages.filter(p => (
+      p.analysis &&
+      !isAnalysisOcrCandidate(p.analysis) &&
+      p.analysis.hasText
+    )).map(p => p.id);
 
-    let targetIds = [...scannedIds];
+    let targetIds = [...candidateIds];
     let includeTextPages = false;
 
-    if (hasTextIds.length > 0) {
-      if (confirm(`Found ${hasTextIds.length} pages that already have text. Do you want to run OCR on them anyway? (Their vector graphics will be preserved)`)) {
-        targetIds = [...targetIds, ...hasTextIds];
+    if (healthyTextIds.length > 0) {
+      if (confirm(`Found ${formatCount(healthyTextIds.length, 'page')} with healthy selectable text. Include them in OCR anyway? Their vector graphics will be preserved.`)) {
+        targetIds = [...targetIds, ...healthyTextIds];
         includeTextPages = true;
       }
     }
@@ -325,7 +380,7 @@ export const Workspace: React.FC = () => {
       return;
     }
 
-    if (!confirm(`Process ${targetIds.length} pages in background? You can keep browsing.`)) return;
+    if (!confirm(`Process ${formatCount(targetIds.length, 'page')} in background? You can keep browsing.`)) return;
     void startOcr(targetIds, { mode: 'batch', includeTextPages });
   };
 
@@ -350,6 +405,11 @@ export const Workspace: React.FC = () => {
   };
 
   const handleExport = async () => {
+    if (isImportRunning || isOcrRunning) {
+      alert('Wait for import and OCR jobs to finish before exporting.');
+      return;
+    }
+
     setIsExporting(true);
     try {
       const blob = await exportModifiedPdf(documents, pages, annotations, 1.5);
@@ -379,39 +439,56 @@ export const Workspace: React.FC = () => {
   const ocrProgress = getOcrJobProgress(ocrJob);
   const effectivePageAnalysis = pageAnalysis ?? activePage.analysis ?? null;
   const showSuspectTextLayer = effectivePageAnalysis ? isSuspectTextHealth(effectivePageAnalysis.textHealth) : false;
-  const shouldUseNativeTextLayer = !activePage.ocrResult && !showSuspectTextLayer;
+  const shouldUseNativeTextLayer = !activePage.ocrResult &&
+    activePage.analysisStatus === 'complete' &&
+    !showSuspectTextLayer;
+  const pageCanOcr = isAnalysisOcrCandidate(effectivePageAnalysis);
+  const showOcrHint = activePage && !dismissedOcrHintPageIds.has(activePage.id);
+  const hasGeneratedOcr = Boolean(activePage.ocrResult);
+  const hasNativeHiddenOcr = !hasGeneratedOcr && isNativeHiddenOcrAnalysis(effectivePageAnalysis);
+  const suspectCopy = effectivePageAnalysis && showSuspectTextLayer ? textHealthCopy(effectivePageAnalysis) : null;
+  const hintCopy = ocrHintCopy(effectivePageAnalysis);
 
   return (
-    <div className="workspace-viewport" style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-      <div className="glass" style={{ padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', borderBottom: '1px solid var(--surface-border)', borderRadius: 0, borderTop: 'none', borderLeft: 'none', borderRight: 'none', zIndex: 10, flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
-          <label className="btn btn-secondary">
+    <div className="workspace-viewport">
+      <div className="glass workspace-toolbar">
+        <div className="workspace-toolbar-group">
+          <label className="btn btn-secondary" data-disabled={isImportRunning ? 'true' : undefined} aria-disabled={isImportRunning}>
             <input
               type="file"
               multiple
               accept="application/pdf"
-              style={{ display: 'none' }}
+              className="visually-hidden-input"
+              aria-label="Add PDFs to merge"
+              disabled={isImportRunning}
               onChange={(e) => {
                 if (e.target.files) addFiles(Array.from(e.target.files));
               }}
             />
-            <Plus size={16} /> Add PDFs to Merge
+            <Plus size={16} /> {isImportRunning ? 'Importing...' : 'Add PDFs to Merge'}
           </label>
           {showImportProgress && (
-            <div className="import-progress-pill" data-testid="workspace-import-progress">
+            <div className="import-progress-pill" data-testid="workspace-import-progress" role="status" aria-live="polite">
               <span>{formatImportStatus(importJob)}</span>
-              <div className="import-progress-bar" aria-hidden="true">
+              <div
+                className="import-progress-bar"
+                role="progressbar"
+                aria-label="PDF import progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={importProgress}
+              >
                 <div style={{ width: `${importProgress}%` }} />
               </div>
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
+        <div className="workspace-toolbar-group workspace-toolbar-actions">
           <button className="btn btn-secondary" onClick={clearAllWithUndo}>Start Over</button>
           <button className="btn btn-secondary" onClick={handleBatchOCR} disabled={isOcrRunning} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Sparkles size={16} /> Batch OCR
           </button>
-          {effectivePageAnalysis?.isScanned && (
+          {pageCanOcr && !hasGeneratedOcr && (
             <button className="btn btn-primary" onClick={() => handleOCR()} disabled={isOcrRunning} style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Sparkles size={16} /> {isOcrRunning ? `Processing...` : 'OCR Page'}
             </button>
@@ -423,7 +500,7 @@ export const Workspace: React.FC = () => {
           >
             {debugTextLayer ? 'Hide Mesh' : 'Show Mesh'}
           </button>
-          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting}>
+          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting || isImportRunning || isOcrRunning}>
             <Download size={16} /> {isExporting ? 'Exporting...' : 'Export PDF'}
           </button>
         </div>
@@ -431,26 +508,33 @@ export const Workspace: React.FC = () => {
       <div
         ref={scrollRef}
         className={`workspace-content ${isPanning ? 'panning' : ''}`}
-        style={{ flex: 1, minHeight: 0, overflow: 'auto', position: 'relative', display: 'flex', padding: '24px' }}
         onClick={() => setActiveTextId(null)}
       >
-        {showSuspectTextLayer && !effectivePageAnalysis?.hasOCR && (
-          <div className="glass" style={{ position: 'absolute', top: '12px', left: '50%', transform: 'translateX(-50%)', padding: '8px 16px', zIndex: 100, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid #f59e0b', color: '#fbbf24' }}>
-            <span>Text layer appears suspect. Native selection is disabled for this page.</span>
+        {suspectCopy && !effectivePageAnalysis?.hasOCR && (
+          <div className="glass text-health-banner text-health-banner-warning">
+            <span>{suspectCopy.message}</span>
+            <span className="text-health-banner-detail">{suspectCopy.detail}</span>
           </div>
         )}
-        {effectivePageAnalysis?.hasOCR && (
-          <div className="glass" style={{ position: 'absolute', top: '12px', left: '50%', transform: 'translateX(-50%)', padding: '8px 16px', zIndex: 100, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--accent-color)', color: 'var(--accent-color)' }}>
-            <span>This page contains a text layer.</span>
-            <button
-              className="btn btn-secondary"
-              style={{ fontSize: '0.7rem', padding: '4px 8px' }}
-              onClick={handleCleanOCR}
-              disabled={!canCleanOcr || isExporting}
-              title={canCleanOcr ? 'Clean OCR' : cleanOcrUnavailableMessage}
-            >
-              Clean OCR
-            </button>
+        {hasGeneratedOcr && (
+          <div className="glass text-health-banner">
+            <span>OCR text added to this page.</span>
+          </div>
+        )}
+        {hasNativeHiddenOcr && (
+          <div className="glass text-health-banner">
+            <span>This page contains a native hidden text layer.</span>
+            {canCleanOcr ? (
+              <button
+                className="btn btn-secondary text-health-banner-action"
+                onClick={handleCleanOCR}
+                disabled={isExporting}
+              >
+                Clean OCR
+              </button>
+            ) : (
+              <span className="text-health-banner-detail">{cleanOcrUnavailableMessage}</span>
+            )}
           </div>
         )}
         <div
@@ -460,8 +544,13 @@ export const Workspace: React.FC = () => {
           onMouseDown={handleMouseDown}
         >
 
-          {effectivePageAnalysis?.isScanned && !activePage?.ocrResult && showOcrHint && !isOcrRunning && (
-            <OCRHint onOCR={() => handleOCR()} onDismiss={() => setShowOcrHint(false)} />
+          {pageCanOcr && !activePage?.ocrResult && showOcrHint && !isOcrRunning && (
+            <OCRHint
+              title={hintCopy.title}
+              description={hintCopy.description}
+              onOCR={() => handleOCR()}
+              onDismiss={() => setDismissedOcrHintPageIds(prev => new Set(prev).add(activePage.id))}
+            />
           )}
           <canvas ref={canvasRef} style={{ display: 'block' }} />
           {/* Native PDF.js text layer — managed imperatively, never touched by React */}
@@ -532,7 +621,7 @@ export const Workspace: React.FC = () => {
       </div>
 
       <div className="page-indicator">
-        <button className="page-indicator-nav" onClick={goPrev} disabled={activeIndex <= 0}><ChevronLeft size={16} /></button>
+        <button className="page-indicator-nav" onClick={goPrev} disabled={activeIndex <= 0} aria-label="Previous page"><ChevronLeft size={16} /></button>
         {isEditingPageNum ? (
           <input
             ref={pageInputRef}
@@ -542,14 +631,15 @@ export const Workspace: React.FC = () => {
             onChange={e => setPageInputValue(e.target.value)}
             onBlur={commitPageNumber}
             onKeyDown={handlePageInputKeyDown}
+            aria-label="Page number"
             autoFocus
           />
         ) : (
-          <button className="page-indicator-label" onClick={handlePageNumberClick}>
+          <button className="page-indicator-label" onClick={handlePageNumberClick} aria-label={`Go to page, currently page ${activeIndex + 1} of ${pages.length}`}>
             {activeIndex + 1} <span className="page-indicator-total">/ {pages.length}</span>
           </button>
         )}
-        <button className="page-indicator-nav" onClick={goNext} disabled={activeIndex >= pages.length - 1}><ChevronRight size={16} /></button>
+        <button className="page-indicator-nav" onClick={goNext} disabled={activeIndex >= pages.length - 1} aria-label="Next page"><ChevronRight size={16} /></button>
 
         <div className="zoom-control">
           <input
@@ -560,12 +650,17 @@ export const Workspace: React.FC = () => {
             step="0.1"
             value={scale}
             onChange={handleScaleChange}
+            aria-label="Zoom level"
+            aria-valuemin={50}
+            aria-valuemax={300}
+            aria-valuenow={Math.round(scale * 100)}
+            aria-valuetext={`${Math.round(scale * 100)}%`}
           />
           <span className="zoom-label">{Math.round(scale * 100)}%</span>
         </div>
 
         {showOcrProgress && (
-          <div className="ocr-pill">
+          <div className="ocr-pill" role="status" aria-live="polite">
             <Sparkles size={12} className="ocr-pill-icon" />
             <div className="ocr-pill-info">
               <span className="ocr-pill-status">{formatOcrStatus(ocrJob)}</span>
@@ -575,11 +670,18 @@ export const Workspace: React.FC = () => {
                 {ocrJob.skipped > 0 ? `, ${ocrJob.skipped} skipped` : ''}
               </span>
             </div>
-            <div className="ocr-pill-bar-container">
+            <div
+              className="ocr-pill-bar-container"
+              role="progressbar"
+              aria-label="OCR progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={ocrProgress}
+            >
               <div className="ocr-pill-bar" style={{ width: `${ocrProgress}%` }} />
             </div>
             {isOcrRunning && (
-              <button className="ocr-pill-cancel" onClick={cancelOcr} title="Cancel OCR">
+              <button className="ocr-pill-cancel" onClick={cancelOcr} title="Cancel OCR" aria-label="Cancel OCR">
                 <X size={10} />
               </button>
             )}
@@ -674,7 +776,7 @@ const DraggableText: React.FC<{
         <span style={{ color: annot.color, fontSize: `${annot.fontSize * scale}px`, fontWeight: 600, whiteSpace: 'nowrap' }}>{annot.text}</span>
       )}
       {isActive && (
-        <button className="icon-btn" onClick={onRemove} style={{ width: '24px', height: '24px', color: 'var(--danger-color)' }}>
+        <button className="icon-btn" onClick={onRemove} aria-label="Remove text annotation" style={{ width: '24px', height: '24px', color: 'var(--danger-color)' }}>
           <Trash2 size={14} />
         </button>
       )}

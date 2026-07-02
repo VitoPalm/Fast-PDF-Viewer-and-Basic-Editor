@@ -1,6 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { Scissors, Trash2, Download, CheckSquare, X, AlertTriangle } from 'lucide-react';
 import { usePdf } from '../../shared/hooks/usePdf';
+import { isImportJobBusy } from '../../context/importJob';
+import { isOcrJobBusy } from '../../context/ocrJob';
 import { usePageRangeParser } from './usePageRangeParser';
 import { exportModifiedPdf } from '../pdf-engine/utils';
 import { pageIdsByNumbers } from '../page-operations/pageOperations';
@@ -9,7 +11,7 @@ import './BatchOps.css';
 
 export const PageRangeBar: React.FC = () => {
   const {
-    pages, documents, annotations,
+    pages, documents, annotations, importJob, ocrJob,
     selectPagesByNumbers, removePagesWithUndo, keepOnlyPagesWithUndo,
     rangeInput: input, setRangeInput: setInput
   } = usePdf();
@@ -17,6 +19,8 @@ export const PageRangeBar: React.FC = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [showStrip, setShowStrip] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const rangeStatusId = useId();
+  const rangeErrorId = useId();
   const totalPages = pages.length;
 
   const { pages: parsedPages, errors, isValid } = usePageRangeParser(input, totalPages);
@@ -36,18 +40,20 @@ export const PageRangeBar: React.FC = () => {
   const handleExtract = useCallback(() => {
     if (!isValid || parsedPages.length === 0) return;
     const ids = getPageIdsByNumbers(parsedPages);
-    keepOnlyPagesWithUndo(ids);
-    setInput('');
-  }, [isValid, parsedPages, getPageIdsByNumbers, keepOnlyPagesWithUndo, setInput]);
+    keepOnlyPagesWithUndo(ids, { title: 'Keep only pages in range?', nextRangeInput: '' });
+  }, [isValid, parsedPages, getPageIdsByNumbers, keepOnlyPagesWithUndo]);
 
   const handleRemove = useCallback(() => {
     if (!isValid || parsedPages.length === 0) return;
     const ids = getPageIdsByNumbers(parsedPages);
-    removePagesWithUndo(ids);
-    setInput('');
-  }, [isValid, parsedPages, getPageIdsByNumbers, removePagesWithUndo, setInput]);
+    removePagesWithUndo(ids, { title: 'Remove pages in range?', nextRangeInput: '' });
+  }, [isValid, parsedPages, getPageIdsByNumbers, removePagesWithUndo]);
 
   const handleExportRange = useCallback(async () => {
+    if (isImportJobBusy(importJob) || isOcrJobBusy(ocrJob)) {
+      alert('Wait for import and OCR jobs to finish before exporting.');
+      return;
+    }
     if (!isValid || parsedPages.length === 0) return;
     setIsExporting(true);
     try {
@@ -69,7 +75,7 @@ export const PageRangeBar: React.FC = () => {
     } finally {
       setIsExporting(false);
     }
-  }, [isValid, parsedPages, getPageIdsByNumbers, pages, documents, annotations, input]);
+  }, [annotations, documents, getPageIdsByNumbers, importJob, input, isValid, ocrJob, pages, parsedPages]);
 
   const handleSelect = useCallback(() => {
     if (!isValid || parsedPages.length === 0) return;
@@ -114,6 +120,11 @@ export const PageRangeBar: React.FC = () => {
   const hasErrors = errors.length > 0;
   const showActions = hasInput && parsedPages.length > 0;
   const canRunActions = isValid && parsedPages.length > 0;
+  const canExportRange = canRunActions && !isImportJobBusy(importJob) && !isOcrJobBusy(ocrJob);
+  const describedBy = [
+    hasInput ? rangeStatusId : null,
+    hasErrors ? rangeErrorId : null,
+  ].filter(Boolean).join(' ') || undefined;
 
   return (
     <div className={`page-range-bar ${isFocused ? 'focused' : ''} ${hasErrors ? 'has-errors' : ''}`}>
@@ -124,6 +135,9 @@ export const PageRangeBar: React.FC = () => {
             ref={inputRef}
             type="text"
             className="page-range-input"
+            aria-label="Page range"
+            aria-invalid={hasErrors}
+            aria-describedby={describedBy}
             placeholder={placeholder}
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -133,7 +147,7 @@ export const PageRangeBar: React.FC = () => {
             spellCheck={false}
           />
           {hasInput && (
-            <button className="page-range-clear" onClick={handleClear} title="Clear">
+            <button className="page-range-clear" onClick={handleClear} title="Clear" aria-label="Clear page range">
               <X size={14} />
             </button>
           )}
@@ -148,7 +162,7 @@ export const PageRangeBar: React.FC = () => {
               <Trash2 size={14} />
               <span>Remove</span>
             </button>
-            <button className="page-range-action-btn export" onClick={handleExportRange} disabled={!canRunActions || isExporting}>
+            <button className="page-range-action-btn export" onClick={handleExportRange} disabled={!canExportRange || isExporting}>
               <Download size={14} />
               <span>{isExporting ? '...' : 'Save as PDF'}</span>
             </button>
@@ -160,9 +174,9 @@ export const PageRangeBar: React.FC = () => {
         )}
       </div>
       {hasInput && (
-        <div className="page-range-status">
-          {isValid && parsedPages.length > 0 && <span className="page-range-count">{parsedPages.length} pages selected</span>}
-          {hasErrors && <span className="page-range-error"><AlertTriangle size={12} />{errors[0].token}: {errors[0].reason}</span>}
+        <div id={rangeStatusId} className="page-range-status" role="status" aria-live="polite">
+          {isValid && parsedPages.length > 0 && <span className="page-range-count">{parsedPages.length} pages in range</span>}
+          {hasErrors && <span id={rangeErrorId} className="page-range-error"><AlertTriangle size={12} />{errors[0].token}: {errors[0].reason}</span>}
         </div>
       )}
       {showStrip && isValid && <PageStrip pageNumbers={parsedPages} />}

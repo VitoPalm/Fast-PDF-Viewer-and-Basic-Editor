@@ -51,6 +51,24 @@ h1, h2, h3, h4, h5, h6 {
   outline: none;
 }
 
+.btn:focus-visible,
+.btn:focus-within,
+.icon-btn:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.28);
+}
+
+.btn:disabled,
+button:disabled,
+.btn[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .btn-primary {
   background-color: var(--accent-color);
   color: white;
@@ -111,6 +129,18 @@ h1, h2, h3, h4, h5, h6 {
 .icon-btn.active {
   background: var(--accent-color);
   color: white;
+}
+
+.visually-hidden-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Layout Utilities */

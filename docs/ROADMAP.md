@@ -349,6 +349,21 @@ Still outside Batch 4:
 - deterministic glyph text repair and mutation;
 - deeper font/ToUnicode diagnostics beyond PDF.js text-content heuristics.
 
+### 1.5.1 Stabilization Note
+
+Status: completed on 2026-07-02.
+
+Scope:
+
+- improve upload, workspace, sidebar, range, and OCR accessibility after the
+  native/text-health implementation;
+- keep toolbar, range preview, thumbnail, and import/OCR progress layouts
+  usable at supported desktop widths;
+- run focused UX critique and adversarial workflow checks before moving to
+  glyph repair;
+- keep the 1.5.0 native/text-health behavior intact while shipping the fixes as
+  patch release `1.5.1`.
+
 ### Workstream E: Clean OCR Native Boundary
 
 Owner scope:

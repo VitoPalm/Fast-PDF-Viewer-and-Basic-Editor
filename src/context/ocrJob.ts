@@ -1,4 +1,4 @@
-import { type PdfPageInfo } from '../features/pdf-engine/utils';
+import { isAnalysisOcrCandidate, type PdfPageInfo } from '../features/pdf-engine/utils';
 
 export type OcrJobPhase =
   | 'idle'
@@ -183,7 +183,7 @@ export const getOcrCandidatePages = (
     if (!requested.has(page.id)) return false;
     if (page.ocrStatus === 'running' || page.ocrStatus === 'queued') return false;
     if (options.force || options.includeTextPages) return true;
-    return page.analysis?.isScanned === true;
+    return isAnalysisOcrCandidate(page.analysis);
   });
 };
 

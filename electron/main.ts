@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import gsWasm from '@okathira/ghostpdl-wasm';
-import { Buffer } from 'node:buffer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -12,8 +11,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Linux GPU/Wayland Stability Fixes
 if (process.platform === 'linux') {
+  app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
   app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform');
+  app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-gpu-memory-buffer-video-frames');
 }
 
@@ -38,6 +39,18 @@ interface ValidCleanOcrInput {
   pdfBytes: Uint8Array;
   pageNumber: number;
 }
+
+const getGhostscriptWasmPath = (): string => (
+  app.isPackaged
+    ? path.join(process.resourcesPath, 'gs.wasm')
+    : path.join(__dirname, '../node_modules/@okathira/ghostpdl-wasm/dist/gs.wasm')
+);
+
+const loadGhostscript = () => gsWasm({
+  locateFile(filename) {
+    return filename.endsWith('.wasm') ? getGhostscriptWasmPath() : filename;
+  },
+});
 
 const cleanOcrFailure = (code: CleanOcrErrorCode, message: string): CleanOcrResult => ({
   ok: false,
@@ -69,55 +82,25 @@ const validateCleanOcrInput = (input: unknown): CleanOcrResult | ValidCleanOcrIn
   return { pdfBytes, pageNumber };
 };
 
-const getPdfPageCount = (pdfBytes: Uint8Array): number | null => {
-  const pdfText = Buffer.from(pdfBytes).toString('latin1');
-  if (!pdfText.slice(0, 1024).includes('%PDF-')) return null;
-
-  const pageObjectMatches = pdfText.match(/\/Type\s*\/Page(?!s)\b/g);
-  if (pageObjectMatches && pageObjectMatches.length > 0) {
-    return pageObjectMatches.length;
-  }
-
-  const countMatches = [...pdfText.matchAll(/\/Count\s+(\d+)/g)]
-    .map(match => Number.parseInt(match[1] ?? '0', 10))
-    .filter(count => Number.isInteger(count) && count > 0);
-
-  if (countMatches.length === 0) return null;
-  return Math.max(...countMatches);
-};
-
-const validateCleanOcrPageRange = (
-  pdfBytes: Uint8Array,
-  pageNumber: number,
-): CleanOcrResult | { pageCount: number } => {
-  const pageCount = getPdfPageCount(pdfBytes);
-  if (pageCount === null) {
-    return cleanOcrFailure('invalid-input', 'Clean OCR could not read the PDF bytes.');
-  }
-
-  if (pageNumber > pageCount) {
-    return cleanOcrFailure(
-      'page-out-of-range',
-      `Clean OCR page ${pageNumber} is outside this ${pageCount}-page PDF.`,
-    );
-  }
-
-  return { pageCount };
+const hasPdfHeader = (pdfBytes: Uint8Array): boolean => {
+  const header = String.fromCharCode(...pdfBytes.slice(0, 1024));
+  return header.includes('%PDF-');
 };
 
 ipcMain.handle('clean-ocr-page', async (_event, input: unknown): Promise<CleanOcrResult> => {
   const validInput = validateCleanOcrInput(input);
   if ('ok' in validInput) return validInput;
 
-  const rangeValidation = validateCleanOcrPageRange(validInput.pdfBytes, validInput.pageNumber);
-  if ('ok' in rangeValidation) return rangeValidation;
+  if (!hasPdfHeader(validInput.pdfBytes)) {
+    return cleanOcrFailure('invalid-input', 'Clean OCR requires a valid PDF payload.');
+  }
 
   let instance: Awaited<ReturnType<typeof gsWasm>> | null = null;
   let inputFilename: string | null = null;
   let outputFilename: string | null = null;
 
   try {
-    instance = await gsWasm();
+    instance = await loadGhostscript();
     const filenameSuffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     inputFilename = `/input-${filenameSuffix}.pdf`;
     outputFilename = `/output-${filenameSuffix}.pdf`;

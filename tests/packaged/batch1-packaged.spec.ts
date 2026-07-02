@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { PDFDocument, rgb } from 'pdf-lib';
 import { launchPackagedApp, loadPdf } from './packagedApp';
 
 const fixtureDir = process.env.PDF_UI_FIXTURE_DIR ?? '/tmp/antigravity-pdf-ui-fixtures';
@@ -62,6 +63,18 @@ async function confirmDialogAction(page: Page, dialogName: RegExp, actionName: s
   await expect(dialog).toBeHidden();
 }
 
+async function createCleanOcrProbePdfBytes() {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([180, 120]);
+  page.drawText('Clean OCR probe', {
+    x: 24,
+    y: 64,
+    size: 14,
+    color: rgb(0, 0, 0),
+  });
+  return new Uint8Array(await pdf.save());
+}
+
 test.describe('Packaged app Batch 1 smoke regressions', () => {
   test('packaged preload exposes typed Clean OCR bridge and rejects invalid input', async ({ browserName }, testInfo) => {
     void browserName;
@@ -90,6 +103,23 @@ test.describe('Packaged app Batch 1 smoke regressions', () => {
         ok: false,
         error: { code: 'invalid-input' },
       });
+
+      const validPdfBytes = await createCleanOcrProbePdfBytes();
+      const validResult = await page.evaluate(async (bytes) => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        if (!bridge) {
+          return { ok: false, error: { code: 'missing-bridge', message: 'Missing bridge.' } };
+        }
+        const result = await bridge.cleanOcrPage({ pdfBytes: new Uint8Array(bytes), pageNumber: 1 });
+        return result.ok
+          ? { ok: true, byteLength: result.pdfBytes.byteLength }
+          : result;
+      }, Array.from(validPdfBytes));
+
+      expect(validResult.ok).toBe(true);
+      if (validResult.ok) {
+        expect(validResult.byteLength).toBeGreaterThan(0);
+      }
     } finally {
       await electronApp.close();
     }
@@ -124,8 +154,9 @@ test.describe('Packaged app Batch 1 smoke regressions', () => {
       await loadPdf(page, fixtures.stats27, 27, testInfo);
       await fillRange(page, '2-3');
       await page.getByRole('button', { name: 'Remove', exact: true }).first().click();
-      await confirmDialogAction(page, /remove selected pages/i, 'Remove');
+      await confirmDialogAction(page, /remove pages in range/i, 'Remove');
       await expect(page.locator('.page-count-badge')).toHaveText('25');
+      await expect(page.locator('.page-range-input')).toHaveValue('');
 
       const undoToast = page.getByRole('status').filter({ hasText: /Removed 2 pages/i });
       await expect(undoToast).toBeVisible();
