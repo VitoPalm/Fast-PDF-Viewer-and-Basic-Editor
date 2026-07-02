@@ -1,5 +1,6 @@
 import React from 'react';
 import { type PdfDocumentInfo, type PdfPageInfo } from '../../features/pdf-engine/utils';
+import { type GlyphJob } from '../../context/glyphRepairJob';
 import { type ImportJob } from '../../context/importJob';
 import { type OcrJob, type OcrJobOptions } from '../../context/ocrJob';
 
@@ -32,8 +33,11 @@ export interface PdfContextType {
   isLoading: boolean;
   importJob: ImportJob;
   ocrJob: OcrJob;
+  glyphJob: GlyphJob;
   addFiles: (files: File[]) => Promise<void>;
   cancelImport: () => void;
+  startGlyphDiagnostics: (pageIds: string[]) => Promise<void>;
+  cancelGlyphDiagnostics: () => void;
   startOcr: (pageIds: string[], options: OcrJobOptions) => Promise<void>;
   cancelOcr: () => void;
   retryFailedOcr: () => Promise<void>;

@@ -14,6 +14,8 @@ pages.
 - pdf-lib for page copying/export.
 - Tesseract.js for OCR.
 - GhostPDL/Ghostscript WASM path for the current Clean OCR flow.
+- Apache PDFBox/FontBox Java sidecar for glyph text diagnostics and future
+  `/ToUnicode` repair.
 - GitHub Actions plus electron-builder for CI/release packaging.
 
 ## Primary Source Areas
@@ -28,6 +30,8 @@ pages.
   reordering, and selected-page OCR entry points.
 - `src/features/batch-ops/`: range parsing and batch operations.
 - `electron/`: native shell, preload bridge, and Clean OCR IPC.
+- `native/glyph-repair/`: PDFBox-based glyph diagnostics sidecar used by the
+  Electron bridge.
 - `.github/workflows/`: CI and release automation.
 
 ## Current User Workflows
@@ -41,6 +45,7 @@ pages.
 - Run OCR on a page, and partially on selected pages through the current UI.
 - Clean OCR through the Electron native bridge when running in the packaged or
   Electron app.
+- Diagnose suspect glyph mappings on pages with broken selectable text.
 
 ## Architectural Observations
 
@@ -57,13 +62,14 @@ pages.
   and batch flows.
 - Page analysis now includes text-layer health so suspect native text can be
   routed away from blind DOM text rendering before glyph repair exists.
-- Future glyph text repair should be separate from OCR overlay generation. It
-  should repair text mapping metadata, preferably `/ToUnicode`, while preserving
-  vector rendering.
+- Glyph text diagnostics now run through a separate PDFBox sidecar, not the OCR
+  overlay path. Future mutation should repair text mapping metadata, preferably
+  `/ToUnicode`, while preserving vector rendering.
 
 ## Current Build And Release Shape
 
-- `npm run lint`, unit tests, and `npx tsc -b --pretty false` pass locally.
+- `npm run lint`, unit tests, `npx tsc -b --pretty false`, and the Java glyph
+  sidecar build pass locally when Java and Maven are installed.
 - CI currently runs the packaging-oriented `build` script, not a lightweight
   quality-gate script.
 - Release workflow publishes from `v*` tags but should be hardened with type
@@ -74,13 +80,11 @@ pages.
 
 ## Immediate Engineering Priorities
 
-1. Treat 1.5.1 as the stabilized desktop baseline for native OCR and text
-   health.
-2. Preserve the 1.5.0 native bridge and text-health behavior through regression
-   checks.
+1. Treat 1.6.0 as the first glyph diagnostics baseline.
+2. Add deterministic `/ToUnicode` mutation only after diagnostics and fixture
+   coverage are stable.
 3. Decide whether fit-to-width/default zoom polish should land before glyph
-   repair.
-4. Resolve release, licensing, and bundled asset strategy before public binary
+   mutation.
+4. Bundle or locate a Java runtime for packaged glyph diagnostics.
+5. Resolve release, licensing, and bundled asset strategy before public binary
    distribution.
-5. Move into deterministic glyph text repair once the stabilized desktop
-   workflows remain green.

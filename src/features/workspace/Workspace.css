@@ -415,10 +415,21 @@
   color: var(--text-secondary);
 }
 
+.text-health-banner-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .text-health-banner-action {
   font-size: 0.7rem;
   padding: 4px 8px;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 @media (max-width: 980px) {
@@ -483,6 +494,15 @@
     border-top: 1px solid var(--surface-border);
     justify-content: center;
   }
+
+  .glyph-pill {
+    width: 100%;
+    margin-left: 0;
+    padding: 4px 8px 0;
+    border-left: none;
+    border-top: 1px solid var(--surface-border);
+    justify-content: center;
+  }
 }
 
 .ocr-pill-retry {
@@ -502,4 +522,81 @@
 .ocr-pill-retry:hover {
   background: var(--surface-highlight);
   border-color: rgba(255, 255, 255, 0.16);
+}
+
+.glyph-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  padding: 0 12px;
+  border-left: 1px solid var(--surface-border);
+  animation: fadeIn 0.3s ease;
+  min-width: 0;
+}
+
+.glyph-pill-icon {
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+
+.glyph-pill-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.glyph-pill-status {
+  font-size: 0.68rem;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.glyph-pill-queue {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.glyph-pill-bar-container {
+  width: 48px;
+  height: 3px;
+  background: var(--surface-highlight);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.glyph-pill-bar {
+  height: 100%;
+  background: #f59e0b;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.35);
+}
+
+.glyph-pill-cancel {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.glyph-pill-cancel:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
 }

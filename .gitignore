@@ -14,6 +14,7 @@ dist-electron
 release
 output
 *.local
+native/glyph-repair/target/
 
 # Editor directories and files
 .vscode/*

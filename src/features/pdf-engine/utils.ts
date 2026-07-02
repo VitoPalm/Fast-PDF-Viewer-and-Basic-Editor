@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument, rgb, PDFOperator, PDFOperatorNames, PDFNumber } from 'pdf-lib';
 import { type TextAnnotation } from '../../shared/types/pdf';
+import { type GlyphDiagnosticsReport, type GlyphDiagnosticsStatus } from '../../shared/types/glyph';
 import { analyzeTextLayerHealth, type TextLayerHealthStatus } from './textLayerHealth';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -23,6 +24,9 @@ export interface PdfPageInfo {
   thumbnailDataUrl?: string; // Cache the thumbnail
   analysisStatus?: 'pending' | 'running' | 'complete' | 'failed';
   analysisError?: string;
+  glyphDiagnosticsStatus?: GlyphDiagnosticsStatus;
+  glyphDiagnosticsError?: string;
+  glyphDiagnostics?: GlyphDiagnosticsReport;
   ocrStatus?: 'idle' | 'queued' | 'running' | 'complete' | 'failed' | 'skipped';
   ocrError?: string;
   ocrResult?: {
@@ -276,4 +280,24 @@ export const cleanOcrFromPage = async (docInfo: PdfDocumentInfo, pageNumber: num
   );
 
   return new Blob([outputBuffer], { type: 'application/pdf' });
+};
+
+export const glyphDiagnosticsUnavailableMessage = 'Native glyph diagnostics are unavailable in this environment.';
+
+export const diagnoseGlyphText = async (
+  docInfo: PdfDocumentInfo,
+  pageNumbers: number[],
+): Promise<GlyphDiagnosticsReport> => {
+  if (!window.antigravityPdf?.diagnoseGlyphText) {
+    throw new Error(glyphDiagnosticsUnavailableMessage);
+  }
+
+  const arrayBuffer = await docInfo.file.arrayBuffer();
+  const pdfBytes = new Uint8Array(arrayBuffer);
+  const result = await window.antigravityPdf.diagnoseGlyphText({ pdfBytes, pageNumbers });
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+
+  return result.report;
 };

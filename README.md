@@ -46,8 +46,9 @@ Antigravity PDF is built on a modern, decoupled architecture designed for perfor
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js (v18 or higher)
-- npm or yarn
+- Node.js 22 or higher
+- npm
+- Java 21 or higher and Maven, required to build the PDFBox glyph diagnostics sidecar
 
 ### Installation
 1. Clone the repository:

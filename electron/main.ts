@@ -1,13 +1,20 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import gsWasm from '@okathira/ghostpdl-wasm';
+import { execFile } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
   type CleanOcrErrorCode,
   type CleanOcrResult,
+  type GlyphDiagnosticsErrorCode,
+  type GlyphDiagnosticsResult,
 } from '../src/shared/types/electron';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 
 // Linux GPU/Wayland Stability Fixes
 if (process.platform === 'linux') {
@@ -40,10 +47,21 @@ interface ValidCleanOcrInput {
   pageNumber: number;
 }
 
+interface ValidGlyphDiagnosticsInput {
+  pdfBytes: Uint8Array;
+  pageNumbers: number[];
+}
+
 const getGhostscriptWasmPath = (): string => (
   app.isPackaged
     ? path.join(process.resourcesPath, 'gs.wasm')
     : path.join(__dirname, '../node_modules/@okathira/ghostpdl-wasm/dist/gs.wasm')
+);
+
+const getGlyphRepairJarPath = (): string => (
+  app.isPackaged
+    ? path.join(process.resourcesPath, 'glyph-repair.jar')
+    : path.join(__dirname, '../native/glyph-repair/target/glyph-repair.jar')
 );
 
 const loadGhostscript = () => gsWasm({
@@ -53,6 +71,14 @@ const loadGhostscript = () => gsWasm({
 });
 
 const cleanOcrFailure = (code: CleanOcrErrorCode, message: string): CleanOcrResult => ({
+  ok: false,
+  error: { code, message },
+});
+
+const glyphDiagnosticsFailure = (
+  code: GlyphDiagnosticsErrorCode,
+  message: string,
+): GlyphDiagnosticsResult => ({
   ok: false,
   error: { code, message },
 });
@@ -80,6 +106,27 @@ const validateCleanOcrInput = (input: unknown): CleanOcrResult | ValidCleanOcrIn
   }
 
   return { pdfBytes, pageNumber };
+};
+
+const validateGlyphDiagnosticsInput = (input: unknown): GlyphDiagnosticsResult | ValidGlyphDiagnosticsInput => {
+  if (!isRecord(input)) {
+    return glyphDiagnosticsFailure('invalid-input', 'Glyph diagnostics require a PDF byte payload and page numbers.');
+  }
+
+  const { pdfBytes, pageNumbers } = input;
+  if (!(pdfBytes instanceof Uint8Array) || pdfBytes.byteLength === 0) {
+    return glyphDiagnosticsFailure('invalid-input', 'Glyph diagnostics require non-empty PDF bytes.');
+  }
+
+  if (
+    !Array.isArray(pageNumbers) ||
+    pageNumbers.length === 0 ||
+    pageNumbers.some(pageNumber => !Number.isInteger(pageNumber) || pageNumber < 1)
+  ) {
+    return glyphDiagnosticsFailure('page-out-of-range', 'Glyph diagnostics require positive 1-indexed page numbers.');
+  }
+
+  return { pdfBytes, pageNumbers };
 };
 
 const hasPdfHeader = (pdfBytes: Uint8Array): boolean => {
@@ -141,6 +188,72 @@ ipcMain.handle('clean-ocr-page', async (_event, input: unknown): Promise<CleanOc
         }
       }
     }
+  }
+});
+
+ipcMain.handle('diagnose-glyph-text', async (_event, input: unknown): Promise<GlyphDiagnosticsResult> => {
+  const validInput = validateGlyphDiagnosticsInput(input);
+  if ('ok' in validInput) return validInput;
+
+  if (!hasPdfHeader(validInput.pdfBytes)) {
+    return glyphDiagnosticsFailure('invalid-input', 'Glyph diagnostics require a valid PDF payload.');
+  }
+
+  const glyphRepairJarPath = getGlyphRepairJarPath();
+  try {
+    await fs.access(glyphRepairJarPath);
+  } catch {
+    return glyphDiagnosticsFailure(
+      'sidecar-unavailable',
+      'Glyph diagnostics sidecar is unavailable. Build native/glyph-repair first.',
+    );
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'antigravity-glyph-'));
+  const inputPath = path.join(tempDir, 'input.pdf');
+
+  try {
+    await fs.writeFile(inputPath, validInput.pdfBytes);
+    const { stdout, stderr } = await execFileAsync(
+      'java',
+      [
+        '-jar',
+        glyphRepairJarPath,
+        'diagnose',
+        '--input',
+        inputPath,
+        '--pages',
+        validInput.pageNumbers.join(','),
+        '--format',
+        'json',
+      ],
+      {
+        timeout: 120_000,
+        maxBuffer: 16 * 1024 * 1024,
+        windowsHide: true,
+      },
+    );
+
+    const trimmedStdout = stdout.trim();
+    if (!trimmedStdout) {
+      return glyphDiagnosticsFailure(
+        'sidecar-failed',
+        stderr.trim() || 'Glyph diagnostics sidecar returned no output.',
+      );
+    }
+
+    try {
+      return { ok: true, report: JSON.parse(trimmedStdout) };
+    } catch (err) {
+      return glyphDiagnosticsFailure(
+        'parse-failed',
+        `Glyph diagnostics sidecar returned invalid JSON: ${errorMessage(err)}`,
+      );
+    }
+  } catch (err) {
+    return glyphDiagnosticsFailure('sidecar-failed', `Glyph diagnostics failed: ${errorMessage(err)}`);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
 

@@ -652,6 +652,23 @@ Pipeline:
 - Add UI badge: "Text layer suspect".
 - No PDF mutation.
 
+Status: implemented for `1.6.0` on 2026-07-02.
+
+Completed:
+
+- added a PDFBox/FontBox Java sidecar under `native/glyph-repair`;
+- added a typed Electron `diagnoseGlyphText` bridge;
+- added page-level glyph diagnostics status and report storage;
+- added workspace and sidebar diagnostics UI for suspect text pages;
+- added unit and packaged smoke coverage for the diagnostics bridge.
+
+Still outside Phase 4A:
+
+- deterministic `/ToUnicode` mutation;
+- OCR-assisted glyph mapping;
+- bundled Java runtime strategy;
+- independent render/extraction validation in automated tests.
+
 #### Phase 4B: Deterministic ToUnicode Repair
 
 - Generate `/ToUnicode` for simple recoverable cases:

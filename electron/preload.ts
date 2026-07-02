@@ -5,6 +5,9 @@ const antigravityPdfBridge: AntigravityPdfBridge = {
   cleanOcrPage(input) {
     return ipcRenderer.invoke('clean-ocr-page', input);
   },
+  diagnoseGlyphText(input) {
+    return ipcRenderer.invoke('diagnose-glyph-text', input);
+  },
 };
 
 contextBridge.exposeInMainWorld('antigravityPdf', antigravityPdfBridge);

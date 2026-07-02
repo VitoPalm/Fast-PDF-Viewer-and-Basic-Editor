@@ -1,6 +1,6 @@
 import React, { useState, useCallback, type ReactNode, useEffect, useRef, useReducer } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument, analyzePage } from '../features/pdf-engine/utils';
+import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument, analyzePage, diagnoseGlyphText } from '../features/pdf-engine/utils';
 import { type PageMutationConfirmOptions, type TextAnnotation } from '../shared/types/pdf';
 import { OCRService } from '../features/pdf-engine/ocrService';
 import { detectLanguage } from '../features/pdf-engine/languageDetector';
@@ -21,6 +21,14 @@ import {
   ocrJobReducer,
   type OcrJobOptions,
 } from './ocrJob';
+import {
+  applyPageGlyphReportForJob,
+  applyPageGlyphStatusForJob,
+  createIdleGlyphJob,
+  getGlyphDiagnosticsCandidatePages,
+  glyphJobReducer,
+  isGlyphJobBusy,
+} from './glyphRepairJob';
 import {
   getNextActivePageId,
   keepOnlyPagesById,
@@ -73,6 +81,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [rangeInput, setRangeInput] = useState('');
   const [importJob, dispatchImportJob] = useReducer(importJobReducer, createIdleImportJob());
   const [ocrJob, dispatchOcrJob] = useReducer(ocrJobReducer, createIdleOcrJob());
+  const [glyphJob, dispatchGlyphJob] = useReducer(glyphJobReducer, createIdleGlyphJob());
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [pendingUndoState, setPendingUndoState] = useState<PendingUndoState | null>(null);
   const undoTimerRef = useRef<number | null>(null);
@@ -89,13 +98,15 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ) => void>(() => {});
   const currentImportJobIdRef = useRef(0);
   const currentOcrJobIdRef = useRef(0);
+  const currentGlyphJobIdRef = useRef(0);
   const ocrCancelRef = useRef(false);
+  const glyphCancelRef = useRef(false);
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
   const undoButtonRef = useRef<HTMLButtonElement | null>(null);
   const pausedUndoRemainingMsRef = useRef<number | null>(null);
   const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
 
-  const isLoading = isImportJobBusy(importJob) || isOcrJobBusy(ocrJob);
+  const isLoading = isImportJobBusy(importJob) || isOcrJobBusy(ocrJob) || isGlyphJobBusy(glyphJob);
 
   useEffect(() => {
     // Pre-initialize OCR engine in the background
@@ -144,6 +155,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const isOcrJobCurrent = useCallback((jobId: number) => (
     currentOcrJobIdRef.current === jobId
+  ), []);
+
+  const isGlyphJobCurrent = useCallback((jobId: number) => (
+    currentGlyphJobIdRef.current === jobId
   ), []);
 
   const getErrorMessage = useCallback((err: unknown): string => (
@@ -231,6 +246,113 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     dispatchOcrJob({ type: 'cancelled', jobId: cancelledJobId });
     currentOcrJobIdRef.current += 1;
   }, [updateOcrStatusForJob]);
+
+  const updateGlyphStatusForJob = useCallback((
+    jobId: number,
+    pageId: string,
+    status: PdfPageInfo['glyphDiagnosticsStatus'],
+    error?: string,
+  ) => {
+    setPages(prev => applyPageGlyphStatusForJob(prev, {
+      currentJobId: currentGlyphJobIdRef.current,
+      jobId,
+      pageId,
+      status: status ?? 'idle',
+      error,
+    }));
+  }, []);
+
+  const cancelGlyphDiagnostics = useCallback(() => {
+    const cancelledJobId = currentGlyphJobIdRef.current;
+    if (cancelledJobId <= 0) return;
+
+    glyphCancelRef.current = true;
+    const skippedIds = pagesRef.current
+      .filter(page => page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running')
+      .map(page => page.id);
+
+    skippedIds.forEach(pageId => {
+      updateGlyphStatusForJob(cancelledJobId, pageId, 'skipped');
+      dispatchGlyphJob({ type: 'page-skipped', jobId: cancelledJobId, pageId });
+    });
+
+    dispatchGlyphJob({ type: 'cancelled', jobId: cancelledJobId });
+    currentGlyphJobIdRef.current += 1;
+  }, [updateGlyphStatusForJob]);
+
+  const applyGlyphReportForJob = useCallback((
+    jobId: number,
+    pageId: string,
+    report: Awaited<ReturnType<typeof diagnoseGlyphText>>,
+  ) => {
+    if (!isGlyphJobCurrent(jobId)) return;
+
+    setPages(prev => applyPageGlyphReportForJob(prev, {
+      currentJobId: currentGlyphJobIdRef.current,
+      jobId,
+      pageId,
+      report,
+    }));
+  }, [isGlyphJobCurrent]);
+
+  const startGlyphDiagnostics = useCallback(async (pageIds: string[]) => {
+    const candidates = getGlyphDiagnosticsCandidatePages(pagesRef.current, pageIds);
+    if (candidates.length === 0) return;
+
+    if (isGlyphJobBusy(glyphJob)) {
+      cancelGlyphDiagnostics();
+    }
+
+    const jobId = currentGlyphJobIdRef.current + 1;
+    currentGlyphJobIdRef.current = jobId;
+    glyphCancelRef.current = false;
+
+    const targetIds = candidates.map(page => page.id);
+    dispatchGlyphJob({ type: 'started', jobId, pageIds: targetIds });
+    setPages(prev => prev.map(page => targetIds.includes(page.id) ? {
+      ...page,
+      glyphDiagnosticsStatus: 'queued',
+      glyphDiagnosticsError: undefined,
+    } : page));
+
+    try {
+      for (const pageInfo of candidates) {
+        if (!isGlyphJobCurrent(jobId) || glyphCancelRef.current) return;
+
+        updateGlyphStatusForJob(jobId, pageInfo.id, 'running');
+        dispatchGlyphJob({ type: 'page-running', jobId, pageId: pageInfo.id });
+
+        try {
+          const docInfo = documentsRef.current[pageInfo.docId];
+          if (!docInfo) throw new Error(`Missing PDF document for page ${pageInfo.originalPageIndex}`);
+
+          const report = await diagnoseGlyphText(docInfo, [pageInfo.originalPageIndex]);
+          if (!isGlyphJobCurrent(jobId) || glyphCancelRef.current) return;
+
+          applyGlyphReportForJob(jobId, pageInfo.id, report);
+          dispatchGlyphJob({ type: 'page-complete', jobId, pageId: pageInfo.id });
+        } catch (err) {
+          if (!isGlyphJobCurrent(jobId) || glyphCancelRef.current) return;
+
+          const error = getErrorMessage(err);
+          updateGlyphStatusForJob(jobId, pageInfo.id, 'failed', error);
+          dispatchGlyphJob({ type: 'page-failed', jobId, pageId: pageInfo.id, error });
+        }
+      }
+
+      if (!isGlyphJobCurrent(jobId) || glyphCancelRef.current) return;
+      dispatchGlyphJob({ type: 'completed', jobId });
+    } catch (err) {
+      if (!isGlyphJobCurrent(jobId) || glyphCancelRef.current) return;
+
+      const error = getErrorMessage(err);
+      targetIds.forEach(pageId => {
+        updateGlyphStatusForJob(jobId, pageId, 'failed', error);
+        dispatchGlyphJob({ type: 'page-failed', jobId, pageId, error });
+      });
+      dispatchGlyphJob({ type: 'failed', jobId, error });
+    }
+  }, [applyGlyphReportForJob, cancelGlyphDiagnostics, getErrorMessage, glyphJob, isGlyphJobCurrent, updateGlyphStatusForJob]);
 
   const startOcr = useCallback(async (pageIds: string[], options: OcrJobOptions) => {
     const candidates = getOcrCandidatePages(pagesRef.current, pageIds, options);
@@ -461,6 +583,9 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ocrStatus: currentPage.ocrStatus ?? snapshotPage.ocrStatus,
       ocrError: currentPage.ocrError,
       ocrResult: currentPage.ocrResult ?? snapshotPage.ocrResult,
+      glyphDiagnosticsStatus: currentPage.glyphDiagnosticsStatus ?? snapshotPage.glyphDiagnosticsStatus,
+      glyphDiagnosticsError: currentPage.glyphDiagnosticsError,
+      glyphDiagnostics: currentPage.glyphDiagnostics ?? snapshotPage.glyphDiagnostics,
     };
   }, []);
 
@@ -473,6 +598,12 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ocrError: page.ocrStatus === 'queued' || page.ocrStatus === 'running'
         ? 'OCR was cancelled before undo restored this page.'
         : page.ocrError,
+      glyphDiagnosticsStatus: page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running'
+        ? 'skipped'
+        : page.glyphDiagnosticsStatus,
+      glyphDiagnosticsError: page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running'
+        ? 'Glyph diagnostics were cancelled before undo restored this page.'
+        : page.glyphDiagnosticsError,
     }))
   ), []);
 
@@ -804,12 +935,13 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const clearAll = useCallback(() => {
     cancelImport();
     cancelOcr();
+    cancelGlyphDiagnostics();
     setDocuments({});
     setPages([]);
     setActivePageId(null);
     setSelectedPageIds(new Set());
     setRangeInput('');
-  }, [cancelImport, cancelOcr]);
+  }, [cancelGlyphDiagnostics, cancelImport, cancelOcr]);
 
   const removePageWithUndo = useCallback((id: string) => {
     const pageIndex = pages.findIndex(page => page.id === id);
@@ -895,6 +1027,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       beforeApply: () => {
         cancelImport();
         cancelOcr();
+        cancelGlyphDiagnostics();
       },
       allowDuringImport: true,
     }, () => ({
@@ -904,7 +1037,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       selectedPageIds: new Set(),
       rangeInput: '',
     }));
-  }, [cancelImport, cancelOcr, pages.length, requestConfirmedPageMutation]);
+  }, [cancelGlyphDiagnostics, cancelImport, cancelOcr, pages.length, requestConfirmedPageMutation]);
 
   const reorderPage = useCallback((sourceIndex: number, destinationIndex: number) => {
     commitImmediatePageMutation('Reordered page', snapshot => {
@@ -1023,9 +1156,9 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   return (
     <PdfContext.Provider value={{
-      documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob, ocrJob,
+      documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob, ocrJob, glyphJob,
       rangeInput, setRangeInput,
-      addFiles, cancelImport, startOcr, cancelOcr, retryFailedOcr,
+      addFiles, cancelImport, startGlyphDiagnostics, cancelGlyphDiagnostics, startOcr, cancelOcr, retryFailedOcr,
       setPages, setActivePageId, replacePage, removePage, removePages, extractPages, clearAll,
       removePageWithUndo, removePagesWithUndo, keepOnlyPagesWithUndo, clearAllWithUndo,
       reorderPage, reorderSelectedPages,

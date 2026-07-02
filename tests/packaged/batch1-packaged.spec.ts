@@ -16,9 +16,14 @@ type CleanOcrResultLike =
   | { ok: true; pdfBytes: Uint8Array }
   | { ok: false; error: { code: string; message: string } };
 
+type GlyphDiagnosticsResultLike =
+  | { ok: true; report: { pageCount: number; pagesAnalyzed: number; fontCount: number; glyphEvents: number } }
+  | { ok: false; error: { code: string; message: string } };
+
 type PackagedBridgeWindow = Window & {
   antigravityPdf?: {
     cleanOcrPage(input: { pdfBytes: Uint8Array; pageNumber: number }): Promise<CleanOcrResultLike>;
+    diagnoseGlyphText(input: { pdfBytes: Uint8Array; pageNumbers: number[] }): Promise<GlyphDiagnosticsResultLike>;
   };
 };
 
@@ -86,10 +91,11 @@ test.describe('Packaged app Batch 1 smoke regressions', () => {
         return {
           hasBridge: Boolean(bridge),
           hasCleanOcrPage: typeof bridge?.cleanOcrPage === 'function',
+          hasDiagnoseGlyphText: typeof bridge?.diagnoseGlyphText === 'function',
         };
       });
 
-      expect(bridgeShape).toEqual({ hasBridge: true, hasCleanOcrPage: true });
+      expect(bridgeShape).toEqual({ hasBridge: true, hasCleanOcrPage: true, hasDiagnoseGlyphText: true });
 
       const invalidResult = await page.evaluate(async () => {
         const bridge = (window as PackagedBridgeWindow).antigravityPdf;
@@ -119,6 +125,24 @@ test.describe('Packaged app Batch 1 smoke regressions', () => {
       expect(validResult.ok).toBe(true);
       if (validResult.ok) {
         expect(validResult.byteLength).toBeGreaterThan(0);
+      }
+
+      const glyphResult = await page.evaluate(async (bytes) => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        if (!bridge) {
+          return { ok: false, error: { code: 'missing-bridge', message: 'Missing bridge.' } };
+        }
+        return bridge.diagnoseGlyphText({ pdfBytes: new Uint8Array(bytes), pageNumbers: [1] });
+      }, Array.from(validPdfBytes));
+
+      expect(glyphResult.ok).toBe(true);
+      if (glyphResult.ok) {
+        expect(glyphResult.report).toMatchObject({
+          pageCount: 1,
+          pagesAnalyzed: 1,
+        });
+        expect(glyphResult.report.fontCount).toBeGreaterThan(0);
+        expect(glyphResult.report.glyphEvents).toBeGreaterThan(0);
       }
     } finally {
       await electronApp.close();

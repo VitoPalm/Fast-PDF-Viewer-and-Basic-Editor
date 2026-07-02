@@ -20,9 +20,8 @@ Default interpretation:
   similarly important product/tooling addition;
 - otherwise increment `z` for each completed batch.
 
-Current version after the Batch 4 UX/accessibility and adversarial
-stabilization pass:
-`1.5.1`.
+Current version after the Phase 4A glyph diagnostics sidecar:
+`1.6.0`.
 
 ## Local And Release Sync
 
@@ -30,10 +29,10 @@ The local package version lives in both `package.json` and `package-lock.json`.
 Use the version sync script so they stay aligned:
 
 ```bash
-npm run version:set -- 1.5.1
+npm run version:set -- 1.6.0
 ```
 
-Tagged release builds should use tags shaped like `v1.5.1`. Packaging scripts
+Tagged release builds should use tags shaped like `v1.6.0`. Packaging scripts
 run `npm run version:sync:git` before packaging. In GitHub Actions this uses
 `GITHUB_REF_NAME`, so a `vX.Y.Z` release tag updates package metadata to
 `X.Y.Z`.

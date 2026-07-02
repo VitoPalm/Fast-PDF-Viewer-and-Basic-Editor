@@ -342,6 +342,39 @@
   animation: fadeIn 0.3s ease;
 }
 
+.thumbnail-glyph-badge {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: rgba(20, 22, 28, 0.88);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 11;
+  animation: fadeIn 0.3s ease;
+}
+
+.thumbnail-glyph-badge.running {
+  animation: analysisPulse 1.5s ease-in-out infinite;
+}
+
+.thumbnail-glyph-badge.failed {
+  color: var(--danger-color);
+  border-color: rgba(239, 68, 68, 0.45);
+  animation: none;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.thumbnail-glyph-badge.complete {
+  color: #fde68a;
+}
+
 @keyframes analysisPulse {
   0%, 100% { opacity: 0.65; }
   50% { opacity: 1; }

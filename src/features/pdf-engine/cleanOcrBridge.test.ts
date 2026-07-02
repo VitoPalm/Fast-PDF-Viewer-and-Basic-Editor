@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   cleanOcrFromPage,
   cleanOcrUnavailableMessage,
+  diagnoseGlyphText,
+  glyphDiagnosticsUnavailableMessage,
   type PdfDocumentInfo,
 } from './utils';
-import { type AntigravityPdfBridge, type CleanOcrInput } from '../../shared/types/electron';
+import { type AntigravityPdfBridge, type CleanOcrInput, type GlyphDiagnosticsInput } from '../../shared/types/electron';
 
 const originalBridge = window.antigravityPdf;
 
@@ -38,6 +40,9 @@ describe('Clean OCR renderer bridge', () => {
         capturedInputs.push(input);
         return { ok: true, pdfBytes: new Uint8Array([9, 8, 7]) };
       },
+      async diagnoseGlyphText() {
+        throw new Error('not used');
+      },
     };
     window.antigravityPdf = bridge;
 
@@ -64,8 +69,56 @@ describe('Clean OCR renderer bridge', () => {
           },
         };
       },
+      async diagnoseGlyphText() {
+        throw new Error('not used');
+      },
     };
 
     await expect(cleanOcrFromPage(createDocInfo(), 9)).rejects.toThrow('Clean OCR page 9 is outside this 4-page PDF.');
+  });
+});
+
+describe('Glyph diagnostics renderer bridge', () => {
+  it('throws a precise unavailable error outside Electron', async () => {
+    delete window.antigravityPdf;
+
+    await expect(diagnoseGlyphText(createDocInfo(), [2])).rejects.toThrow(glyphDiagnosticsUnavailableMessage);
+  });
+
+  it('passes PDF bytes and page numbers to the native bridge', async () => {
+    const capturedInputs: GlyphDiagnosticsInput[] = [];
+    const bridge: AntigravityPdfBridge = {
+      async cleanOcrPage() {
+        throw new Error('not used');
+      },
+      async diagnoseGlyphText(input) {
+        capturedInputs.push(input);
+        return {
+          ok: true,
+          report: {
+            pageCount: 4,
+            encrypted: false,
+            signatureCount: 0,
+            pagesAnalyzed: 1,
+            fontCount: 1,
+            glyphEvents: 2,
+            unmappedGlyphs: 0,
+            deterministicCandidateFonts: 0,
+            pages: [],
+          },
+        };
+      },
+    };
+    window.antigravityPdf = bridge;
+
+    const report = await diagnoseGlyphText(createDocInfo([4, 5, 6]), [3]);
+    const [input] = capturedInputs;
+    if (!input) {
+      throw new Error('Expected glyph diagnostics bridge input to be captured.');
+    }
+
+    expect(input.pageNumbers).toEqual([3]);
+    expect(Array.from(input.pdfBytes)).toEqual([4, 5, 6]);
+    expect(report).toMatchObject({ pageCount: 4, pagesAnalyzed: 1, fontCount: 1 });
   });
 });

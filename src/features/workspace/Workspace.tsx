@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { usePdf } from '../../shared/hooks/usePdf';
 import { useRenderEngine } from '../pdf-engine/useRenderEngine';
-import { Trash2, ChevronLeft, ChevronRight, Plus, Download, Sparkles, X } from 'lucide-react';
+import { Trash2, ChevronLeft, ChevronRight, Plus, Download, Sparkles, X, FileSearch } from 'lucide-react';
 import { type TextAnnotation } from '../../shared/types/pdf';
 import {
   cleanOcrFromPage,
   cleanOcrUnavailableMessage,
   exportModifiedPdf,
+  glyphDiagnosticsUnavailableMessage,
   isAnalysisOcrCandidate,
   isNativeHiddenOcrAnalysis,
   type PageAnalysis,
@@ -14,7 +15,9 @@ import {
 import { OCRHint } from './OCRHint';
 import { getImportJobProgress, isImportJobBusy, isImportJobVisible, type ImportJob } from '../../context/importJob';
 import { getOcrJobProgress, isOcrJobBusy, isOcrJobVisible, type OcrJob } from '../../context/ocrJob';
+import { getGlyphJobProgress, isGlyphJobBusy, isGlyphJobVisible, type GlyphJob } from '../../context/glyphRepairJob';
 import { isSuspectTextHealth } from '../pdf-engine/textLayerHealth';
+import { type GlyphDiagnosticsReport } from '../../shared/types/glyph';
 import * as pdfjsLib from 'pdfjs-dist';
 import './Workspace.css';
 
@@ -50,6 +53,38 @@ const formatOcrStatus = (job: OcrJob): string => {
     default:
       return 'OCR processing...';
   }
+};
+
+const formatGlyphStatus = (job: GlyphJob): string => {
+  switch (job.phase) {
+    case 'preparing':
+      return 'Preparing text diagnostics...';
+    case 'running':
+      return job.currentPageId ? 'Inspecting glyph mappings...' : 'Diagnosing text...';
+    case 'failed':
+      return job.error ?? 'Glyph diagnostics failed';
+    case 'cancelled':
+      return 'Glyph diagnostics cancelled';
+    default:
+      return 'Glyph diagnostics...';
+  }
+};
+
+const formatGlyphDiagnosticsSummary = (report: GlyphDiagnosticsReport): string => {
+  const page = report.pages[0];
+  if (!page || page.glyphEvents === 0) {
+    return 'No vector text glyphs were found on this page.';
+  }
+
+  if (report.deterministicCandidateFonts > 0) {
+    return `${report.deterministicCandidateFonts} font${report.deterministicCandidateFonts === 1 ? '' : 's'} look repairable by adding a /ToUnicode map.`;
+  }
+
+  if (report.unmappedGlyphs > 0) {
+    return `${report.unmappedGlyphs}/${report.glyphEvents} glyphs lack Unicode mapping. This page likely needs deeper mapping or OCR-assisted alignment.`;
+  }
+
+  return `${report.fontCount} font${report.fontCount === 1 ? '' : 's'} inspected; glyph mappings look usable.`;
 };
 
 const formatCount = (count: number, singular: string, plural = `${singular}s`): string => (
@@ -102,6 +137,7 @@ export const Workspace: React.FC = () => {
     annotations, updateAnnotation, removeAnnotation,
     addFiles, replacePage, clearAllWithUndo, importJob,
     ocrJob, startOcr, cancelOcr, retryFailedOcr,
+    glyphJob, startGlyphDiagnostics, cancelGlyphDiagnostics,
   } = usePdf();
   const { requestPage } = useRenderEngine();
   const [isExporting, setIsExporting] = useState(false);
@@ -126,6 +162,7 @@ export const Workspace: React.FC = () => {
   const pageInputRef = useRef<HTMLInputElement>(null);
 
   const isOcrRunning = isOcrJobBusy(ocrJob);
+  const isGlyphRunning = isGlyphJobBusy(glyphJob);
   const isImportRunning = isImportJobBusy(importJob);
 
   const activePage = pages.find(p => p.id === activePageId);
@@ -133,6 +170,7 @@ export const Workspace: React.FC = () => {
   const docInfo = activePage ? documents[activePage.docId] : null;
   const pageAnnotations = annotations.filter(a => a.pageId === activePageId);
   const canCleanOcr = typeof window !== 'undefined' && typeof window.antigravityPdf?.cleanOcrPage === 'function';
+  const canDiagnoseGlyphText = typeof window !== 'undefined' && typeof window.antigravityPdf?.diagnoseGlyphText === 'function';
 
   useEffect(() => {
     if (!activePage || !docInfo || !canvasRef.current) return;
@@ -404,6 +442,16 @@ export const Workspace: React.FC = () => {
     }
   };
 
+  const handleGlyphDiagnostics = async () => {
+    if (!activePage || isGlyphRunning) return;
+    if (!canDiagnoseGlyphText) {
+      alert(glyphDiagnosticsUnavailableMessage);
+      return;
+    }
+
+    await startGlyphDiagnostics([activePage.id]);
+  };
+
   const handleExport = async () => {
     if (isImportRunning || isOcrRunning) {
       alert('Wait for import and OCR jobs to finish before exporting.');
@@ -437,6 +485,8 @@ export const Workspace: React.FC = () => {
   const importProgress = getImportJobProgress(importJob);
   const showOcrProgress = isOcrJobVisible(ocrJob);
   const ocrProgress = getOcrJobProgress(ocrJob);
+  const showGlyphProgress = isGlyphJobVisible(glyphJob);
+  const glyphProgress = getGlyphJobProgress(glyphJob);
   const effectivePageAnalysis = pageAnalysis ?? activePage.analysis ?? null;
   const showSuspectTextLayer = effectivePageAnalysis ? isSuspectTextHealth(effectivePageAnalysis.textHealth) : false;
   const shouldUseNativeTextLayer = !activePage.ocrResult &&
@@ -448,6 +498,9 @@ export const Workspace: React.FC = () => {
   const hasNativeHiddenOcr = !hasGeneratedOcr && isNativeHiddenOcrAnalysis(effectivePageAnalysis);
   const suspectCopy = effectivePageAnalysis && showSuspectTextLayer ? textHealthCopy(effectivePageAnalysis) : null;
   const hintCopy = ocrHintCopy(effectivePageAnalysis);
+  const glyphSummary = activePage.glyphDiagnostics
+    ? formatGlyphDiagnosticsSummary(activePage.glyphDiagnostics)
+    : null;
 
   return (
     <div className="workspace-viewport">
@@ -512,8 +565,22 @@ export const Workspace: React.FC = () => {
       >
         {suspectCopy && !effectivePageAnalysis?.hasOCR && (
           <div className="glass text-health-banner text-health-banner-warning">
-            <span>{suspectCopy.message}</span>
-            <span className="text-health-banner-detail">{suspectCopy.detail}</span>
+            <div className="text-health-banner-copy">
+              <span>{suspectCopy.message}</span>
+              <span className="text-health-banner-detail">{glyphSummary ?? suspectCopy.detail}</span>
+            </div>
+            {canDiagnoseGlyphText ? (
+              <button
+                className="btn btn-secondary text-health-banner-action"
+                onClick={handleGlyphDiagnostics}
+                disabled={isGlyphRunning || activePage.glyphDiagnosticsStatus === 'running'}
+              >
+                <FileSearch size={14} />
+                {activePage.glyphDiagnosticsStatus === 'complete' ? 'Run Again' : 'Diagnose Text'}
+              </button>
+            ) : (
+              <span className="text-health-banner-detail">{glyphDiagnosticsUnavailableMessage}</span>
+            )}
           </div>
         )}
         {hasGeneratedOcr && (
@@ -688,6 +755,35 @@ export const Workspace: React.FC = () => {
             {ocrJob.phase === 'failed' && ocrJob.failedPageIds.length > 0 && (
               <button className="ocr-pill-retry" onClick={() => void retryFailedOcr()} title="Retry failed OCR pages">
                 Retry
+              </button>
+            )}
+          </div>
+        )}
+
+        {showGlyphProgress && (
+          <div className="glyph-pill" role="status" aria-live="polite">
+            <FileSearch size={12} className="glyph-pill-icon" />
+            <div className="glyph-pill-info">
+              <span className="glyph-pill-status">{formatGlyphStatus(glyphJob)}</span>
+              <span className="glyph-pill-queue">
+                {glyphJob.completed}/{glyphJob.total} pages
+                {glyphJob.failed > 0 ? `, ${glyphJob.failed} failed` : ''}
+                {glyphJob.skipped > 0 ? `, ${glyphJob.skipped} skipped` : ''}
+              </span>
+            </div>
+            <div
+              className="glyph-pill-bar-container"
+              role="progressbar"
+              aria-label="Glyph diagnostics progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={glyphProgress}
+            >
+              <div className="glyph-pill-bar" style={{ width: `${glyphProgress}%` }} />
+            </div>
+            {isGlyphRunning && (
+              <button className="glyph-pill-cancel" onClick={cancelGlyphDiagnostics} title="Cancel glyph diagnostics" aria-label="Cancel glyph diagnostics">
+                <X size={10} />
               </button>
             )}
           </div>
