@@ -6,6 +6,9 @@
   "author": "Vito Palmieri <vito@example.com>",
   "type": "module",
   "main": "dist-electron/main.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && electron-builder --publish never",
