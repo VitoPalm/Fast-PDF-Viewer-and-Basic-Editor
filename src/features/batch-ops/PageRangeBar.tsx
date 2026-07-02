@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { Scissors, Trash2, Download, CheckSquare, X, AlertTriangle } from 'lucide-react';
 import { usePdf } from '../../shared/hooks/usePdf';
-import { isImportJobBusy } from '../../context/importJob';
+import { isImportJobBlocking } from '../../context/importJob';
 import { isOcrJobBusy } from '../../context/ocrJob';
 import { isGlyphTextRepairJobBusy } from '../../context/glyphTextRepairJob';
 import { isGlyphJobBusy } from '../../context/glyphRepairJob';
@@ -52,8 +52,8 @@ export const PageRangeBar: React.FC = () => {
   }, [isValid, parsedPages, getPageIdsByNumbers, removePagesWithUndo]);
 
   const handleExportRange = useCallback(async () => {
-    if (isImportJobBusy(importJob) || isOcrJobBusy(ocrJob) || isGlyphJobBusy(glyphJob) || isGlyphTextRepairJobBusy(glyphTextRepairJob)) {
-      alert('Wait for import, OCR, text checks, and text repair jobs to finish before exporting.');
+    if (isImportJobBlocking(importJob) || isOcrJobBusy(ocrJob) || isGlyphJobBusy(glyphJob) || isGlyphTextRepairJobBusy(glyphTextRepairJob)) {
+      alert('Wait for PDFs to finish loading, OCR, text checks, and text repair jobs to finish before exporting.');
       return;
     }
     if (!isValid || parsedPages.length === 0) return;
@@ -122,12 +122,12 @@ export const PageRangeBar: React.FC = () => {
   const hasErrors = errors.length > 0;
   const showActions = hasInput && parsedPages.length > 0;
   const canRunActions = isValid && parsedPages.length > 0;
-  const isImportBusy = isImportJobBusy(importJob);
+  const isImportBusy = isImportJobBlocking(importJob);
   const isOcrBusy = isOcrJobBusy(ocrJob);
   const isGlyphBusy = isGlyphJobBusy(glyphJob);
   const isRepairBusy = isGlyphTextRepairJobBusy(glyphTextRepairJob);
   const pageMutationBusyReason = isImportBusy
-    ? 'Import running; page changes are disabled.'
+    ? 'PDFs are still loading; page changes are disabled.'
     : isOcrBusy
       ? 'OCR running; page changes are disabled.'
       : isGlyphBusy
@@ -136,7 +136,7 @@ export const PageRangeBar: React.FC = () => {
           ? 'Text repair running; page changes are disabled.'
           : null;
   const exportBusyReason = isImportBusy
-    ? 'Import running; export is disabled.'
+    ? 'PDFs are still loading; export is disabled.'
     : isOcrBusy
       ? 'OCR running; export is disabled.'
       : isGlyphBusy

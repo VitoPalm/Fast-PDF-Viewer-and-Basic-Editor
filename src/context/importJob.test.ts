@@ -5,6 +5,7 @@ import {
   createIdleImportJob,
   createPagePlaceholders,
   importJobReducer,
+  markPendingAnalysisCancelled,
   orderImportedPagesForAnalysis,
 } from './importJob';
 
@@ -170,5 +171,23 @@ describe('import page helpers', () => {
     expect(next).toBeInstanceOf(Array);
     expect(next[0]).toBe(page);
     expect(next[0].analysisStatus).toBe('pending');
+  });
+
+  it('marks pending and running analysis as failed when import analysis is cancelled', () => {
+    const pages: PdfPageInfo[] = [
+      { ...createPagePlaceholders('doc-a', 1, () => 'pending')[0], analysisStatus: 'pending' },
+      { ...createPagePlaceholders('doc-a', 1, () => 'running')[0], analysisStatus: 'running' },
+      {
+        ...createPagePlaceholders('doc-a', 1, () => 'complete')[0],
+        analysisStatus: 'complete',
+        analysis: healthyAnalysis,
+      },
+    ];
+
+    const next = markPendingAnalysisCancelled(pages, 'cancelled');
+
+    expect(next[0]).toMatchObject({ analysisStatus: 'failed', analysisError: 'cancelled' });
+    expect(next[1]).toMatchObject({ analysisStatus: 'failed', analysisError: 'cancelled' });
+    expect(next[2]).toBe(pages[2]);
   });
 });

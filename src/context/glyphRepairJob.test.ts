@@ -30,10 +30,21 @@ const healthyAnalysis: PageAnalysis = {
   textSample: 'Healthy text',
 };
 
+const hiddenOcrAnalysis: PageAnalysis = {
+  hasText: true,
+  hasOCR: true,
+  isScanned: false,
+  textHealth: 'hiddenOcr',
+  textHealthReasons: ['ocr-result'],
+  textItemCount: 12,
+  textSample: 'OCR text',
+};
+
 const pages: PdfPageInfo[] = [
   { id: 'suspect', docId: 'doc', originalPageIndex: 1, analysis: suspectAnalysis },
   { id: 'healthy', docId: 'doc', originalPageIndex: 2, analysis: healthyAnalysis },
   { id: 'running', docId: 'doc', originalPageIndex: 3, analysis: suspectAnalysis, glyphDiagnosticsStatus: 'running' },
+  { id: 'ocr-overlay', docId: 'doc', originalPageIndex: 4, analysis: hiddenOcrAnalysis, nativeAnalysis: suspectAnalysis },
 ];
 
 const report: GlyphDiagnosticsReport = {
@@ -89,6 +100,10 @@ describe('glyph diagnostics job state', () => {
 describe('glyph diagnostics page helpers', () => {
   it('selects suspect pages and excludes diagnostics already in progress', () => {
     expect(getGlyphDiagnosticsCandidatePages(pages, ['suspect', 'healthy', 'running']).map(page => page.id)).toEqual(['suspect']);
+  });
+
+  it('uses preserved native analysis after OCR overlays', () => {
+    expect(getGlyphDiagnosticsCandidatePages(pages, ['ocr-overlay']).map(page => page.id)).toEqual(['ocr-overlay']);
   });
 
   it('applies page status only for the current job', () => {

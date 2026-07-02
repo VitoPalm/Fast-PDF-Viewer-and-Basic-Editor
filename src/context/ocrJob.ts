@@ -234,10 +234,11 @@ export const applyPageOcrResultForJob = (
     if (page.id !== update.pageId) return page;
 
     changed = true;
-    return {
-      ...page,
-      ocrResult: update.ocrResult,
-      ocrStatus: 'complete' as const,
+      return {
+        ...page,
+        nativeAnalysis: page.nativeAnalysis ?? page.analysis,
+        ocrResult: update.ocrResult,
+        ocrStatus: 'complete' as const,
       ocrError: undefined,
       analysis: {
         hasText: true,

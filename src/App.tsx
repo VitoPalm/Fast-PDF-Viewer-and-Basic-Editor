@@ -6,10 +6,10 @@ import { usePdf } from './shared/hooks/usePdf';
 import './index.css';
 
 const AppContent = () => {
-  const { pages, addFiles, importJob } = usePdf();
+  const { pages, addFiles, cancelImport, importJob } = usePdf();
 
   if (pages.length === 0) {
-    return <UploadScreen onUpload={addFiles} importJob={importJob} />;
+    return <UploadScreen onUpload={addFiles} onCancelImport={cancelImport} importJob={importJob} />;
   }
 
   return (

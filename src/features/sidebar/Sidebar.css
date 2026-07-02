@@ -6,26 +6,26 @@
 }
 
 .resize-handle {
-  width: 4px;
+  width: 12px;
   cursor: col-resize;
   background: transparent;
   transition: background 0.2s;
   z-index: 100;
   position: absolute;
-  right: 0;
+  right: -4px;
   top: 0;
   bottom: 0;
 }
 
 .resize-handle:hover, .resize-handle.active {
-  background: var(--accent-color);
+  background: linear-gradient(to right, transparent 4px, var(--accent-color) 4px, var(--accent-color) 8px, transparent 8px);
   box-shadow: 0 0 10px var(--accent-glow);
 }
 
 .resize-handle:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
-  background: var(--accent-color);
+  background: linear-gradient(to right, transparent 4px, var(--accent-color) 4px, var(--accent-color) 8px, transparent 8px);
 }
 
 .sidebar {
@@ -505,7 +505,8 @@
   font-weight: 600;
   color: var(--accent-color);
   white-space: nowrap;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: max-content;
 }
 
 .batch-toolbar-actions {

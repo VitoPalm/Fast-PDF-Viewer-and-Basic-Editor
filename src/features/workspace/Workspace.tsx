@@ -9,12 +9,13 @@ import {
   exportModifiedPdf,
   glyphDiagnosticsUnavailableMessage,
   glyphRepairUnavailableMessage,
+  getNativePageAnalysis,
   isAnalysisOcrCandidate,
   isNativeHiddenOcrAnalysis,
   type PageAnalysis,
 } from '../pdf-engine/utils';
 import { OCRHint } from './OCRHint';
-import { getImportJobProgress, isImportJobBusy, isImportJobVisible, type ImportJob } from '../../context/importJob';
+import { getImportJobProgress, isImportJobBlocking, isImportJobBusy, isImportJobVisible, type ImportJob } from '../../context/importJob';
 import { getOcrJobProgress, isOcrJobBusy, isOcrJobVisible, type OcrJob } from '../../context/ocrJob';
 import { getGlyphJobProgress, isGlyphJobBusy, isGlyphJobVisible, type GlyphJob } from '../../context/glyphRepairJob';
 import {
@@ -86,6 +87,9 @@ const formatGlyphTextRepairStatus = (job: GlyphTextRepairJob): string => {
     case 'cancelling':
       return job.currentPageId ? 'Stopping after this page...' : 'Stopping text repair...';
     case 'complete':
+      if (job.repaired === 0 && job.skipped > 0) {
+        return 'No pages were repaired';
+      }
       return 'Text repair complete';
     case 'failed':
       return job.error ?? 'Text repair finished with issues';
@@ -174,7 +178,7 @@ export const Workspace: React.FC = () => {
   const {
     pages, activePageId, setActivePageId, documents,
     selectedPageIds, annotations, updateAnnotation, removeAnnotation,
-    addFiles, replacePage, clearAllWithUndo, importJob,
+    addFiles, cancelImport, replacePage, clearAllWithUndo, importJob,
     ocrJob, startOcr, cancelOcr, retryFailedOcr,
     glyphJob, startGlyphDiagnostics, cancelGlyphDiagnostics, repairGlyphTextPage, repairGlyphTextPages,
     glyphTextRepairJob, cancelGlyphTextRepair, confirmAction,
@@ -192,6 +196,7 @@ export const Workspace: React.FC = () => {
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const textLayerRef = useRef<HTMLDivElement>(null);
+  const textLayerRenderIdRef = useRef(0);
   const [dismissedOcrHintPageIds, setDismissedOcrHintPageIds] = useState<Set<string>>(new Set());
   const [debugTextLayer, setDebugTextLayer] = useState(false);
   const [pageAnalysis, setPageAnalysis] = useState<PageAnalysis | null>(null);
@@ -205,6 +210,8 @@ export const Workspace: React.FC = () => {
   const isGlyphRunning = isGlyphJobBusy(glyphJob);
   const isGlyphTextRepairRunning = isGlyphTextRepairJobBusy(glyphTextRepairJob);
   const isImportRunning = isImportJobBusy(importJob);
+  const isImportBlocking = isImportJobBlocking(importJob);
+  const isTextActionImportBusy = isImportRunning;
 
   const activePage = pages.find(p => p.id === activePageId);
   const activeIndex = pages.findIndex(p => p.id === activePageId);
@@ -217,12 +224,17 @@ export const Workspace: React.FC = () => {
   useEffect(() => {
     if (!activePage || !docInfo || !canvasRef.current) return;
     let cancelled = false;
+    const renderId = textLayerRenderIdRef.current + 1;
+    textLayerRenderIdRef.current = renderId;
+    const isCurrentRender = () => !cancelled && textLayerRenderIdRef.current === renderId;
+    let nativeTextLayer: { cancel: () => void } | null = null;
     setIsTransitioning(true);
     setCanvasReady(false);
 
     const render = async () => {
       try {
         const page = await docInfo.pdfjsDoc.getPage(activePage.originalPageIndex);
+        if (!isCurrentRender()) return;
         const viewport = page.getViewport({ scale });
 
         let analysis = activePage.analysis ?? null;
@@ -244,6 +256,7 @@ export const Workspace: React.FC = () => {
               .slice(0, 500),
           };
         }
+        if (!isCurrentRender()) return;
         setPageAnalysis(analysis);
         const shouldRenderNativeTextLayer = !activePage.ocrResult &&
           activePage.analysisStatus === 'complete' &&
@@ -251,7 +264,7 @@ export const Workspace: React.FC = () => {
           !isSuspectTextHealth(analysis.textHealth);
 
         const bitmap = await requestPage(activePage.docId, docInfo.pdfjsDoc, activePage.originalPageIndex, scale, 'urgent');
-        if (cancelled || !canvasRef.current) return;
+        if (!isCurrentRender() || !canvasRef.current) return;
 
         const canvas = canvasRef.current;
         canvas.width = bitmap.width;
@@ -261,35 +274,45 @@ export const Workspace: React.FC = () => {
         setCanvasSize({ width: canvas.width, height: canvas.height });
         setCanvasReady(true);
         requestAnimationFrame(() => {
-          if (!cancelled) setIsTransitioning(false);
+          if (isCurrentRender()) setIsTransitioning(false);
         });
 
         // Render native PDF.js Text Layer (only for pages WITHOUT OCR results)
         // OCR results are rendered by React JSX in a separate container
         const textLayerContainer = textLayerRef.current;
         if (textLayerContainer) {
-          textLayerContainer.innerHTML = '';
+          textLayerContainer.replaceChildren();
           textLayerContainer.style.width = `${canvas.width}px`;
           textLayerContainer.style.height = `${canvas.height}px`;
           if (shouldRenderNativeTextLayer) {
             const textContent = await page.getTextContent();
-            if (cancelled || !textLayerRef.current) return;
+            if (!isCurrentRender() || !textLayerRef.current) return;
 
+            const detachedTextLayerContainer = document.createElement('div');
+            detachedTextLayerContainer.className = 'textLayer';
+            detachedTextLayerContainer.style.width = `${canvas.width}px`;
+            detachedTextLayerContainer.style.height = `${canvas.height}px`;
             const textLayer = new pdfjsLib.TextLayer({
               textContentSource: textContent,
-              container: textLayerRef.current,
+              container: detachedTextLayerContainer,
               viewport: viewport,
             });
+            nativeTextLayer = textLayer;
             await textLayer.render();
+            if (!isCurrentRender() || textLayerRef.current !== textLayerContainer) return;
+            textLayerContainer.replaceChildren(...Array.from(detachedTextLayerContainer.childNodes));
           }
         }
       } catch (err) {
         console.error("Render error", err);
-        if (!cancelled) setIsTransitioning(false);
+        if (isCurrentRender()) setIsTransitioning(false);
       }
     };
     render();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      nativeTextLayer?.cancel();
+    };
   }, [activePage, docInfo, scale, requestPage]);
 
   const lastScrollTime = useRef(0);
@@ -432,13 +455,13 @@ export const Workspace: React.FC = () => {
   };
 
   const handleOCR = async () => {
-    if (!activePage || isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) return;
+    if (!activePage || isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) return;
     setDismissedOcrHintPageIds(prev => new Set(prev).add(activePage.id));
     await startOcr([activePage.id], { mode: 'single', force: true });
   };
 
   const handleBatchOCR = async () => {
-    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) return;
+    if (isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) return;
     const candidateIds = pages.filter(p => isAnalysisOcrCandidate(p.analysis)).map(p => p.id);
     const healthyTextIds = pages.filter(p => (
       p.analysis &&
@@ -473,16 +496,19 @@ export const Workspace: React.FC = () => {
     void startOcr(targetIds, { mode: 'batch', includeTextPages });
   };
 
-  const isGlyphRepairCandidatePage = useCallback((page: typeof pages[number]) => (
-    page.glyphRepairStatus !== 'queued' &&
-    page.glyphRepairStatus !== 'running' &&
-    page.glyphRepairStatus !== 'complete' &&
-    (
-      Boolean(page.glyphDiagnostics?.deterministicCandidateFonts) ||
-      pageHasExistingGlyphMapNeedingReview(page.glyphDiagnostics) ||
-      Boolean(page.ocrResult && page.analysis && isSuspectTextHealth(page.analysis.textHealth))
-    )
-  ), []);
+  const isGlyphRepairCandidatePage = useCallback((page: typeof pages[number]) => {
+    const nativeAnalysis = getNativePageAnalysis(page);
+    return (
+      page.glyphRepairStatus !== 'queued' &&
+      page.glyphRepairStatus !== 'running' &&
+      page.glyphRepairStatus !== 'complete' &&
+      (
+        Boolean(page.glyphDiagnostics?.deterministicCandidateFonts) ||
+        pageHasExistingGlyphMapNeedingReview(page.glyphDiagnostics) ||
+        Boolean(page.ocrResult && nativeAnalysis && isSuspectTextHealth(nativeAnalysis.textHealth))
+      )
+    );
+  }, []);
 
   const selectedRepairScope = selectedPageIds.size > 0 ? selectedPageIds : null;
   const glyphRepairTargetIds = pages
@@ -497,7 +523,7 @@ export const Workspace: React.FC = () => {
   );
   const canStartGlyphTextRepair = (
     canRepairGlyphText &&
-    !isImportRunning &&
+    !isTextActionImportBusy &&
     !isOcrRunning &&
     !isGlyphRunning &&
     !isGlyphTextRepairRunning &&
@@ -505,7 +531,7 @@ export const Workspace: React.FC = () => {
   );
   const glyphRepairButtonTitle = (() => {
     if (!canRepairGlyphText) return glyphRepairUnavailableMessage;
-    if (isImportRunning) return 'Wait for import to finish before repairing text.';
+    if (isTextActionImportBusy) return 'Wait for PDFs to finish loading and analysis before repairing text.';
     if (isOcrRunning) return 'Wait for OCR to finish before repairing text.';
     if (isGlyphRunning) return 'Wait for text checks to finish before repairing text.';
     if (isGlyphTextRepairRunning) return 'Text repair is already running.';
@@ -516,8 +542,8 @@ export const Workspace: React.FC = () => {
     }
     return `${formatCount(glyphRepairTargetIds.length, 'page')} ready for text repair.`;
   })();
-  const toolbarBusyReason = isImportRunning
-    ? 'Import running; some actions are disabled.'
+  const toolbarBusyReason = isTextActionImportBusy
+    ? 'PDFs are still loading or being analyzed; OCR and text actions are disabled.'
     : isOcrRunning
       ? 'OCR running; export and repair are disabled.'
       : isGlyphRunning
@@ -537,8 +563,8 @@ export const Workspace: React.FC = () => {
       alert(glyphRepairUnavailableMessage);
       return;
     }
-    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
-      alert('Wait for import, OCR, text checks, and text repair jobs to finish before starting another repair.');
+    if (isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for PDFs to finish loading and analysis, OCR, text checks, and text repair jobs to finish before starting another repair.');
       return;
     }
 
@@ -559,8 +585,8 @@ export const Workspace: React.FC = () => {
 
   const handleCleanOCR = async () => {
     if (!activePage || !docInfo) return;
-    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
-      alert('Wait for import, OCR, text checks, and text repair jobs to finish before cleaning OCR.');
+    if (isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for PDFs to finish loading and analysis, OCR, text checks, and text repair jobs to finish before cleaning OCR.');
       return;
     }
     if (!canCleanOcr) {
@@ -588,6 +614,10 @@ export const Workspace: React.FC = () => {
 
   const handleGlyphDiagnostics = async () => {
     if (!activePage || isGlyphRunning) return;
+    if (isTextActionImportBusy) {
+      alert('Wait for PDFs to finish loading and analysis before checking text.');
+      return;
+    }
     if (!canDiagnoseGlyphText) {
       alert(glyphDiagnosticsUnavailableMessage);
       return;
@@ -602,8 +632,8 @@ export const Workspace: React.FC = () => {
       alert(glyphRepairUnavailableMessage);
       return;
     }
-    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
-      alert('Wait for import, OCR, text checks, and text repair jobs to finish before repairing this page.');
+    if (isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for PDFs to finish loading and analysis, OCR, text checks, and text repair jobs to finish before repairing this page.');
       return;
     }
     if (!await confirmAction({
@@ -616,8 +646,8 @@ export const Workspace: React.FC = () => {
   };
 
   const handleExport = async () => {
-    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
-      alert('Wait for import, OCR, text checks, and text repair jobs to finish before exporting.');
+    if (isImportBlocking || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for PDFs to finish loading, OCR, text checks, and text repair jobs to finish before exporting.');
       return;
     }
 
@@ -672,8 +702,13 @@ export const Workspace: React.FC = () => {
     ? formatGlyphRepairSummary(activePage.glyphRepairReport)
     : null;
   const glyphBannerDetail = activePage.glyphRepairError ?? glyphRepairSummary ?? glyphSummary;
-  const exportDisabledReason = isImportRunning
-    ? 'Import running; export is disabled.'
+  const showPageStatusBanner = Boolean(
+    (suspectCopy && !effectivePageAnalysis?.hasOCR) ||
+    hasGeneratedOcr ||
+    hasNativeHiddenOcr
+  );
+  const exportDisabledReason = isImportBlocking
+    ? 'PDFs are still loading; export is disabled.'
     : isOcrRunning
       ? 'OCR running; export is disabled.'
       : isGlyphRunning
@@ -681,6 +716,16 @@ export const Workspace: React.FC = () => {
         : isGlyphTextRepairRunning
           ? 'Text repair running; export is disabled.'
           : null;
+  const pageActionBusyReason = isTextActionImportBusy
+    ? 'PDFs are still loading or being analyzed; page text actions are disabled.'
+    : isOcrRunning
+      ? 'OCR running; page text actions are disabled.'
+      : isGlyphRunning
+        ? 'Text check running; page text actions are disabled.'
+        : isGlyphTextRepairRunning || activeGlyphRepairBusy
+          ? 'Text repair running; page text actions are disabled.'
+          : null;
+  const pageActionBusyReasonId = 'workspace-page-action-busy-reason';
 
   return (
     <div className="workspace-viewport">
@@ -724,6 +769,17 @@ export const Workspace: React.FC = () => {
               >
                 <div style={{ width: `${importProgress}%` }} />
               </div>
+              {isImportRunning && (
+                <button
+                  type="button"
+                  className="import-progress-cancel"
+                  onClick={cancelImport}
+                  title="Cancel import"
+                  aria-label="Cancel import"
+                >
+                  <X size={10} />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -732,7 +788,7 @@ export const Workspace: React.FC = () => {
             <span id={toolbarBusyReasonId} className="sr-only">{toolbarBusyReason}</span>
           )}
           <button className="btn btn-secondary" onClick={clearAllWithUndo}>Start Over</button>
-          <button className="btn btn-secondary" onClick={handleBatchOCR} disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={toolbarBusyReason ? toolbarBusyReasonId : undefined} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={handleBatchOCR} disabled={isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={toolbarBusyReason ? toolbarBusyReasonId : undefined} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Sparkles size={16} /> Batch OCR
           </button>
           {showBatchGlyphRepairButton && (
@@ -752,7 +808,7 @@ export const Workspace: React.FC = () => {
             </>
           )}
           {pageCanOcr && !hasGeneratedOcr && (
-            <button className="btn btn-primary" onClick={() => handleOCR()} disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={toolbarBusyReason ? toolbarBusyReasonId : undefined} style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button className="btn btn-primary" onClick={() => handleOCR()} disabled={isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={toolbarBusyReason ? toolbarBusyReasonId : undefined} style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Sparkles size={16} /> {isOcrRunning ? `Processing...` : 'OCR Page'}
             </button>
           )}
@@ -765,16 +821,27 @@ export const Workspace: React.FC = () => {
           >
             {debugTextLayer ? 'Hide Boxes' : 'Show Boxes'}
           </button>
-          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting || isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={exportDisabledReason ? toolbarBusyReasonId : undefined}>
+          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting || isImportBlocking || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={exportDisabledReason ? toolbarBusyReasonId : undefined}>
             <Download size={16} /> {isExporting ? 'Exporting...' : 'Export PDF'}
           </button>
         </div>
       </div>
       <div
         ref={scrollRef}
-        className={`workspace-content ${isPanning ? 'panning' : ''}`}
+        className={`workspace-content ${isPanning ? 'panning' : ''} ${showPageStatusBanner ? 'has-page-status' : ''}`}
         onClick={() => setActiveTextId(null)}
       >
+        {pageActionBusyReason && (
+          <span id={pageActionBusyReasonId} className="sr-only">{pageActionBusyReason}</span>
+        )}
+        {pageCanOcr && !activePage?.ocrResult && showOcrHint && !isOcrRunning && (
+          <OCRHint
+            title={hintCopy.title}
+            description={hintCopy.description}
+            onOCR={() => handleOCR()}
+            onDismiss={() => setDismissedOcrHintPageIds(prev => new Set(prev).add(activePage.id))}
+          />
+        )}
         {suspectCopy && !effectivePageAnalysis?.hasOCR && (
           <div className="glass text-health-banner text-health-banner-warning" role={activePage.glyphRepairStatus === 'failed' ? 'alert' : 'status'} aria-live={activePage.glyphRepairStatus === 'failed' ? 'assertive' : 'polite'}>
             <div className="text-health-banner-copy">
@@ -786,7 +853,8 @@ export const Workspace: React.FC = () => {
                   <button
                     className="btn btn-secondary text-health-banner-action"
                     onClick={handleGlyphDiagnostics}
-                    disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning || activeGlyphRepairBusy || activePage.glyphDiagnosticsStatus === 'running'}
+                    disabled={isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning || activeGlyphRepairBusy || activePage.glyphDiagnosticsStatus === 'running'}
+                    aria-describedby={pageActionBusyReason ? pageActionBusyReasonId : undefined}
                   >
                   <FileSearch size={14} />
                   {activePage.glyphDiagnosticsStatus === 'complete' ? 'Check Again' : 'Check Text'}
@@ -799,7 +867,8 @@ export const Workspace: React.FC = () => {
                   <button
                     className="btn btn-primary text-health-banner-action"
                     onClick={handleGlyphRepair}
-                    disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning || activeGlyphRepairBusy}
+                    disabled={isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning || activeGlyphRepairBusy}
+                    aria-describedby={pageActionBusyReason ? pageActionBusyReasonId : undefined}
                   >
                     <Wrench size={14} />
                     {activePage.glyphRepairStatus === 'queued' ? 'Queued...' : activePage.glyphRepairStatus === 'running' ? 'Repairing...' : 'Repair Text'}
@@ -814,6 +883,17 @@ export const Workspace: React.FC = () => {
         {hasGeneratedOcr && (
           <div className="glass text-health-banner" role="status" aria-live="polite">
             <span>OCR text added to this page.</span>
+            {canRepairActiveGlyphText && canRepairGlyphText && (
+              <button
+                className="btn btn-secondary text-health-banner-action"
+                onClick={handleGlyphRepair}
+                disabled={isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning || activeGlyphRepairBusy}
+                aria-describedby={pageActionBusyReason ? pageActionBusyReasonId : undefined}
+              >
+                <Wrench size={14} />
+                Repair Text
+              </button>
+            )}
           </div>
         )}
         {hasNativeHiddenOcr && (
@@ -823,7 +903,8 @@ export const Workspace: React.FC = () => {
                 <button
                   className="btn btn-secondary text-health-banner-action"
                   onClick={handleCleanOCR}
-                  disabled={isExporting || isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning}
+                  disabled={isExporting || isTextActionImportBusy || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning}
+                  aria-describedby={pageActionBusyReason ? pageActionBusyReasonId : undefined}
                 >
                 Clean OCR
               </button>
@@ -839,14 +920,6 @@ export const Workspace: React.FC = () => {
           onMouseDown={handleMouseDown}
         >
 
-          {pageCanOcr && !activePage?.ocrResult && showOcrHint && !isOcrRunning && (
-            <OCRHint
-              title={hintCopy.title}
-              description={hintCopy.description}
-              onOCR={() => handleOCR()}
-              onDismiss={() => setDismissedOcrHintPageIds(prev => new Set(prev).add(activePage.id))}
-            />
-          )}
           <canvas ref={canvasRef} style={{ display: 'block' }} />
           {/* Native PDF.js text layer — managed imperatively, never touched by React */}
           <div
@@ -1006,7 +1079,7 @@ export const Workspace: React.FC = () => {
                 <div className="repair-pill-bar" style={{ width: `${glyphTextRepairProgress}%` }} />
               </div>
               {isGlyphTextRepairRunning && (
-                <button className="repair-pill-cancel" onClick={cancelGlyphTextRepair} title="Stop after current page" aria-label="Stop text repair after the current page">
+                <button className="repair-pill-cancel" onClick={cancelGlyphTextRepair} title="Stop repair" aria-label="Stop text repair">
                   <X size={10} />
                 </button>
               )}

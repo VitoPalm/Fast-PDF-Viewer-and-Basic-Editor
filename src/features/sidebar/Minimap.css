@@ -22,6 +22,12 @@
   width: 0;
 }
 
+.document-minimap:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+  background: rgba(99, 102, 241, 0.08);
+}
+
 .minimap-scroll-indicator {
   height: 16px;
   display: flex;

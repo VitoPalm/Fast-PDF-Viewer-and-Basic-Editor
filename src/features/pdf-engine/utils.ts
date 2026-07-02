@@ -40,6 +40,7 @@ export interface PdfPageInfo {
   ocrResult?: {
     items: Array<{ str: string, transform: number[], width: number, height: number }>;
   };
+  nativeAnalysis?: PageAnalysis;
   analysis?: PageAnalysis;
 }
 
@@ -52,6 +53,10 @@ export interface PageAnalysis {
   textItemCount: number;
   textSample: string;
 }
+
+export const getNativePageAnalysis = (page: PdfPageInfo): PageAnalysis | undefined => (
+  page.nativeAnalysis ?? page.analysis
+);
 
 export const isAnalysisOcrCandidate = (analysis: PageAnalysis | null | undefined): boolean => (
   analysis?.isScanned === true ||

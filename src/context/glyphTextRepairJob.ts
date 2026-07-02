@@ -55,7 +55,12 @@ export const createIdleGlyphTextRepairJob = (id = 0): GlyphTextRepairJob => ({
 export const isGlyphTextRepairJobBusy = (job: GlyphTextRepairJob): boolean => BUSY_PHASES.has(job.phase);
 
 export const isGlyphTextRepairJobVisible = (job: GlyphTextRepairJob): boolean => (
-  job.phase === 'preparing' || job.phase === 'running' || job.phase === 'cancelling' || job.phase === 'failed'
+  job.phase === 'preparing' ||
+  job.phase === 'running' ||
+  job.phase === 'cancelling' ||
+  job.phase === 'failed' ||
+  job.phase === 'cancelled' ||
+  (job.phase === 'complete' && job.repaired === 0 && job.skipped > 0)
 );
 
 export const getGlyphTextRepairJobProgress = (job: GlyphTextRepairJob): number => {

@@ -178,6 +178,7 @@ describe('ocr page helpers', () => {
       ocrResult,
       ocrStatus: 'complete',
       ocrError: undefined,
+      nativeAnalysis: scannedAnalysis,
       analysis: { hasText: true, hasOCR: true, isScanned: false, textHealth: 'hiddenOcr' },
       analysisStatus: 'complete',
       analysisError: undefined,

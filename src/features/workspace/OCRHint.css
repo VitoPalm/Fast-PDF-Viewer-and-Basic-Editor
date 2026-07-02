@@ -1,21 +1,29 @@
 .ocr-hint-container {
   position: absolute;
-  top: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
+  top: 16px;
+  left: 24px;
+  right: 24px;
+  z-index: 140;
+  margin-inline: auto;
   pointer-events: none;
   animation: slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  width: auto;
+  max-width: 380px;
+}
+
+.workspace-content.has-page-status .ocr-hint-container {
+  top: 64px;
 }
 
 @keyframes slide-down {
-  from { transform: translate(-50%, -20px); opacity: 0; }
-  to { transform: translate(-50%, 0); opacity: 1; }
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
 
 .ocr-hint-card {
   pointer-events: all;
-  width: 380px;
+  width: 100%;
+  max-width: calc(100vw - 64px);
   padding: 16px;
   display: flex;
   gap: 16px;
@@ -81,4 +89,11 @@
 .btn-sm {
   padding: 6px 12px;
   font-size: 0.75rem;
+}
+
+@media (max-width: 700px) {
+  .ocr-hint-container {
+    left: 12px;
+    right: 12px;
+  }
 }

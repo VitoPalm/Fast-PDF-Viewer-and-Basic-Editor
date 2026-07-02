@@ -289,7 +289,7 @@ test.describe('Batch 1 desktop PDF regressions', () => {
     await page.screenshot({ path: testInfo.outputPath('start-over-undo.png'), fullPage: true });
   });
 
-  test('undo expires after the short-lived undo window', async ({ page }, testInfo) => {
+  test('undo pauses while focused and expires after focus leaves', async ({ page }, testInfo) => {
     requireFixture(fixtures.stats27);
     await loadPdf(page, fixtures.stats27, 27, testInfo);
 
@@ -300,6 +300,12 @@ test.describe('Batch 1 desktop PDF regressions', () => {
 
     const undoToast = page.getByRole('status').filter({ hasText: /Removed 1 page/i });
     await expect(undoToast).toBeVisible();
+    await expect(undoToast.getByRole('button', { name: 'Undo', exact: true })).toBeFocused();
+    await page.waitForTimeout(8_500);
+    await expect(undoToast).toBeVisible();
+    await expectPageCount(page, 26);
+
+    await page.getByRole('button', { name: 'Start Over', exact: true }).focus();
     await expect(undoToast).toBeHidden({ timeout: 9_500 });
     await expectPageCount(page, 26);
 

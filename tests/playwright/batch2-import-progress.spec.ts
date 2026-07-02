@@ -45,7 +45,7 @@ test.describe('Batch 2 import progress', () => {
     expect(Number(match?.[1] ?? 665)).toBeLessThan(665);
 
     await page.locator('.page-range-input').fill('1');
-    await expect(page.getByRole('button', { name: 'Save as PDF', exact: true }).first()).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Save as PDF', exact: true }).first()).toBeEnabled();
     await page.locator('.page-range-input').fill('');
 
     await expect(page.locator('.page-indicator-label')).toContainText('1 / 665');

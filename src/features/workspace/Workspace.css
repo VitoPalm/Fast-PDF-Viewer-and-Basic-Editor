@@ -59,6 +59,10 @@
   scrollbar-gutter: stable;
 }
 
+.workspace-content.has-page-status {
+  padding-top: 72px;
+}
+
 .workspace-content.panning {
   cursor: grabbing !important;
 }
@@ -105,6 +109,29 @@
   background: var(--accent-color);
   box-shadow: 0 0 6px var(--accent-glow);
   transition: width 0.2s ease;
+}
+
+.import-progress-cancel {
+  width: 32px;
+  height: 32px;
+  margin: -7px -7px -7px -2px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.import-progress-cancel:hover,
+.import-progress-cancel:focus-visible {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--danger-color);
+  outline: none;
 }
 
 /* Canvas styling */
@@ -267,16 +294,16 @@
 }
 
 .workspace-activity-strip {
-  position: absolute;
-  right: 16px;
-  bottom: 64px;
+  position: relative;
   z-index: 105;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
   width: min(360px, calc(100% - 32px));
+  margin: 0 16px 8px auto;
   pointer-events: none;
+  flex-shrink: 0;
 }
 
 .workspace-activity-strip .ocr-pill,
@@ -396,8 +423,8 @@
 }
 
 .ocr-pill-cancel {
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: none;
   background: transparent;
@@ -408,12 +435,14 @@
   justify-content: center;
   transition: all 0.15s ease;
   flex-shrink: 0;
-  margin-left: 4px;
+  margin: -7px -7px -7px 0;
 }
 
-.ocr-pill-cancel:hover {
+.ocr-pill-cancel:hover,
+.ocr-pill-cancel:focus-visible {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
+  outline: none;
 }
 
 .text-health-banner {
@@ -625,8 +654,8 @@
 }
 
 .glyph-pill-cancel {
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: none;
   background: transparent;
@@ -637,12 +666,14 @@
   justify-content: center;
   transition: all 0.15s ease;
   flex-shrink: 0;
-  margin-left: 4px;
+  margin: -7px -7px -7px 0;
 }
 
-.glyph-pill-cancel:hover {
+.glyph-pill-cancel:hover,
+.glyph-pill-cancel:focus-visible {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
+  outline: none;
 }
 
 .repair-pill {
@@ -702,8 +733,8 @@
 }
 
 .repair-pill-cancel {
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: none;
   background: transparent;
@@ -714,10 +745,12 @@
   justify-content: center;
   transition: all 0.15s ease;
   flex-shrink: 0;
-  margin-left: 4px;
+  margin: -7px -7px -7px 0;
 }
 
-.repair-pill-cancel:hover {
+.repair-pill-cancel:hover,
+.repair-pill-cancel:focus-visible {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
+  outline: none;
 }

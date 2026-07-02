@@ -67,7 +67,21 @@ describe('glyph text repair job state', () => {
       skippedPageIds: ['b'],
     });
     expect(isGlyphTextRepairJobBusy(job)).toBe(false);
-    expect(isGlyphTextRepairJobVisible(job)).toBe(false);
+    expect(isGlyphTextRepairJobVisible(job)).toBe(true);
+  });
+
+  it('keeps all-skipped completion visible for review', () => {
+    let job = glyphTextRepairJobReducer(createIdleGlyphTextRepairJob(), {
+      type: 'started',
+      jobId: 4,
+      pageIds: ['a'],
+    });
+
+    job = glyphTextRepairJobReducer(job, { type: 'page-skipped', jobId: 4, pageId: 'a' });
+    job = glyphTextRepairJobReducer(job, { type: 'completed', jobId: 4 });
+
+    expect(job).toMatchObject({ phase: 'complete', repaired: 0, skipped: 1 });
+    expect(isGlyphTextRepairJobVisible(job)).toBe(true);
   });
 
   it('ignores stale updates and late completion after hard cancellation', () => {

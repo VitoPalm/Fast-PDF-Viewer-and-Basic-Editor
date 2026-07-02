@@ -1,11 +1,12 @@
 import React, { useCallback, useState } from 'react';
-import { UploadCloud, FileText } from 'lucide-react';
+import { UploadCloud, FileText, X } from 'lucide-react';
 import clsx from 'clsx';
 import { getImportJobProgress, isImportJobBusy, isImportJobVisible, type ImportJob } from '../../context/importJob';
 import './UploadScreen.css';
 
 interface UploadScreenProps {
   onUpload: (files: File[]) => void;
+  onCancelImport: () => void;
   importJob: ImportJob;
 }
 
@@ -26,7 +27,7 @@ const formatUploadImportStatus = (job: ImportJob): string => {
   }
 };
 
-export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob }) => {
+export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, onCancelImport, importJob }) => {
   const [isDragging, setIsDragging] = useState(false);
   const showImportProgress = isImportJobVisible(importJob);
   const isImportRunning = isImportJobBusy(importJob);
@@ -66,22 +67,13 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob 
   }, [isImportRunning, onUpload]);
 
   return (
-    <div className="app-container" style={{ alignItems: 'center', justifyContent: 'center', background: 'var(--bg-gradient)' }}>
+    <div className="app-container upload-screen">
       <div 
-        className={clsx('glass animate-fade-in', { 'active': isDragging })}
-        style={{ 
-          padding: '40px', 
-          borderRadius: '24px', 
-          width: '100%', 
-          maxWidth: '600px',
-          textAlign: 'center'
-        }}
+        className={clsx('glass animate-fade-in upload-panel', { 'active': isDragging })}
       >
-        <div style={{ marginBottom: '32px' }}>
-          <h1 style={{ fontSize: '2.5rem', marginBottom: '8px', background: 'linear-gradient(to right, #fff, #a0a4ab)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            Cool PDF Editor
-          </h1>
-          <p style={{ color: 'var(--text-secondary)' }}>Edit, merge, split, and reorder your PDFs with a premium aesthetic.</p>
+        <div className="upload-brand">
+          <h1>Antigravity PDF</h1>
+          <p>Edit, merge, split, and repair searchable PDFs.</p>
         </div>
 
         <label 
@@ -110,25 +102,36 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob 
           <span className="btn btn-primary">
             <FileText size={18} /> Select PDF Files
           </span>
-          {showImportProgress && (
-            <div className="upload-progress" data-testid="upload-import-progress" role="status" aria-live="polite">
-              <div className="upload-progress-label">
-                <span>{formatUploadImportStatus(importJob)}</span>
-                <span>{importProgress}%</span>
-              </div>
-              <div
-                className="upload-progress-bar"
-                role="progressbar"
-                aria-label="PDF import progress"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={importProgress}
-              >
-                <div style={{ width: `${importProgress}%` }} />
-              </div>
-            </div>
-          )}
         </label>
+        {showImportProgress && (
+          <div className="upload-progress" data-testid="upload-import-progress" role="status" aria-live="polite">
+            <div className="upload-progress-label">
+              <span>{formatUploadImportStatus(importJob)}</span>
+              <span>{importProgress}%</span>
+            </div>
+            <div
+              className="upload-progress-bar"
+              role="progressbar"
+              aria-label="PDF import progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={importProgress}
+            >
+              <div style={{ width: `${importProgress}%` }} />
+            </div>
+            {isImportRunning && (
+              <button
+                type="button"
+                className="upload-progress-cancel"
+                onClick={onCancelImport}
+                aria-label="Cancel import"
+              >
+                <X size={14} />
+                Cancel import
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

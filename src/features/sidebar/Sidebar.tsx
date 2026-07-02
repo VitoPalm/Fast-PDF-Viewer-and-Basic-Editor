@@ -5,7 +5,7 @@ import { usePdf } from '../../shared/hooks/usePdf';
 import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 import { PageRangeBar } from '../batch-ops/PageRangeBar';
 import { DocumentMinimap } from './DocumentMinimap';
-import { isAnalysisOcrCandidate, type PdfPageInfo } from '../pdf-engine/utils';
+import { getNativePageAnalysis, isAnalysisOcrCandidate, type PdfPageInfo } from '../pdf-engine/utils';
 import { isSuspectTextHealth } from '../pdf-engine/textLayerHealth';
 import { isImportJobBusy } from '../../context/importJob';
 import { isOcrJobBusy } from '../../context/ocrJob';
@@ -25,10 +25,10 @@ export const Sidebar: React.FC = () => {
     selectedPageIds, togglePageSelection, selectPageRange,
     selectAll, clearSelection, invertSelection, startOcr,
     reorderSelectedPages, importJob, ocrJob, glyphJob, glyphTextRepairJob,
-    repairGlyphTextPages, confirmAction,
+    startGlyphDiagnostics, repairGlyphTextPages, confirmAction,
   } = usePdf();
   
-  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isResizing, setIsResizing] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [containerHeight, setContainerHeight] = useState(600);
@@ -213,7 +213,7 @@ export const Sidebar: React.FC = () => {
   const isGlyphRunning = isGlyphJobBusy(glyphJob);
   const isTextRepairRunning = isGlyphTextRepairJobBusy(glyphTextRepairJob);
   const selectionBusyReason = isImportRunning
-    ? 'Import running'
+    ? 'PDFs still loading or analyzing'
     : isOcrRunning
       ? 'OCR running'
       : isGlyphRunning
@@ -226,20 +226,35 @@ export const Sidebar: React.FC = () => {
     () => pages.filter(p => selectedPageIds.has(p.id) && isAnalysisOcrCandidate(p.analysis)),
     [pages, selectedPageIds],
   );
+  const selectedTextCheckCandidates = useMemo(
+    () => pages.filter(page => {
+      const nativeAnalysis = getNativePageAnalysis(page);
+      return (
+        selectedPageIds.has(page.id) &&
+        page.glyphDiagnosticsStatus !== 'queued' &&
+        page.glyphDiagnosticsStatus !== 'running' &&
+        (!nativeAnalysis || isSuspectTextHealth(nativeAnalysis.textHealth))
+      );
+    }),
+    [pages, selectedPageIds],
+  );
   const selectedTextRepairCandidates = useMemo(
-    () => pages.filter(page => (
-      selectedPageIds.has(page.id) &&
-      page.glyphRepairStatus !== 'queued' &&
-      page.glyphRepairStatus !== 'running' &&
-      page.glyphRepairStatus !== 'complete' &&
-      (
-        Boolean(page.glyphDiagnostics?.deterministicCandidateFonts) ||
-        page.glyphDiagnostics?.pages.some(glyphPage => (
-          glyphPage.fonts.some(font => font.repairPlan === 'existing-to-unicode-needs-review')
-        )) === true ||
-        Boolean(page.ocrResult && page.analysis && isSuspectTextHealth(page.analysis.textHealth))
-      )
-    )),
+    () => pages.filter(page => {
+      const nativeAnalysis = getNativePageAnalysis(page);
+      return (
+        selectedPageIds.has(page.id) &&
+        page.glyphRepairStatus !== 'queued' &&
+        page.glyphRepairStatus !== 'running' &&
+        page.glyphRepairStatus !== 'complete' &&
+        (
+          Boolean(page.glyphDiagnostics?.deterministicCandidateFonts) ||
+          page.glyphDiagnostics?.pages.some(glyphPage => (
+            glyphPage.fonts.some(font => font.repairPlan === 'existing-to-unicode-needs-review')
+          )) === true ||
+          Boolean(page.ocrResult && nativeAnalysis && isSuspectTextHealth(nativeAnalysis.textHealth))
+        )
+      );
+    }),
     [pages, selectedPageIds],
   );
   const removeDisabledDescription = selectionBusyReason
@@ -252,6 +267,12 @@ export const Sidebar: React.FC = () => {
       ? 'No selected pages are ready for OCR.'
       : null;
   const ocrDisabledDescriptionId = 'sidebar-ocr-disabled-reason';
+  const checkDisabledDescription = selectionBusyReason
+    ? `${selectionBusyReason}; selected-page text checks are disabled.`
+    : selectedTextCheckCandidates.length === 0
+      ? 'No selected pages need text checks.'
+      : null;
+  const checkDisabledDescriptionId = 'sidebar-check-disabled-reason';
   const repairDisabledDescription = selectionBusyReason
     ? `${selectionBusyReason}; selected-page repair is disabled.`
     : !canRepairGlyphText
@@ -281,6 +302,26 @@ export const Sidebar: React.FC = () => {
 
     void startOcr(selectedOcrCandidates.map(p => p.id), { mode: 'selected' });
   }, [confirmAction, selectedOcrCandidates, selectionBusyReason, startOcr]);
+
+  const handleCheckSelected = useCallback(async () => {
+    if (selectionBusyReason) {
+      alert(`${selectionBusyReason}; selected-page text checks are disabled.`);
+      return;
+    }
+    if (selectedTextCheckCandidates.length === 0) {
+      alert('No selected pages need text checks.');
+      return;
+    }
+
+    const confirmed = await confirmAction({
+      title: 'Check selected text?',
+      message: `Check selectable text on ${selectedTextCheckCandidates.length} selected page${selectedTextCheckCandidates.length === 1 ? '' : 's'}? You can keep browsing while checks run.`,
+      confirmLabel: 'Check text',
+    });
+    if (!confirmed) return;
+
+    await startGlyphDiagnostics(selectedTextCheckCandidates.map(page => page.id));
+  }, [confirmAction, selectedTextCheckCandidates, selectionBusyReason, startGlyphDiagnostics]);
 
   const handleRepairSelected = useCallback(async () => {
     if (!canRepairGlyphText) {
@@ -350,6 +391,7 @@ export const Sidebar: React.FC = () => {
             >
               {(droppableProvided) => (
                 <div
+                  id="sidebar-page-list"
                   ref={(el) => {
                     droppableProvided.innerRef(el);
                     (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
@@ -418,6 +460,9 @@ export const Sidebar: React.FC = () => {
             {ocrDisabledDescription && (
               <span id={ocrDisabledDescriptionId} className="sr-only">{ocrDisabledDescription}</span>
             )}
+            {checkDisabledDescription && (
+              <span id={checkDisabledDescriptionId} className="sr-only">{checkDisabledDescription}</span>
+            )}
             {repairDisabledDescription && (
               <span id={repairDisabledDescriptionId} className="sr-only">{repairDisabledDescription}</span>
             )}
@@ -445,6 +490,18 @@ export const Sidebar: React.FC = () => {
               >
                 <Sparkles size={14} />
                 <span>OCR</span>
+              </button>
+              <button
+                className="batch-btn"
+                style={{ color: 'var(--text-primary)' }}
+                onClick={() => void handleCheckSelected()}
+                disabled={Boolean(checkDisabledDescription)}
+                title={checkDisabledDescription ?? `Check text on ${selectedTextCheckCandidates.length} selected page${selectedTextCheckCandidates.length === 1 ? '' : 's'}`}
+                aria-describedby={checkDisabledDescription ? checkDisabledDescriptionId : undefined}
+                aria-label={`Check text on ${selectedTextCheckCandidates.length} selected page${selectedTextCheckCandidates.length === 1 ? '' : 's'}`}
+              >
+                <FileSearch size={14} />
+                <span>Check</span>
               </button>
               <button
                 className="batch-btn"

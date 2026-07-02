@@ -9,6 +9,7 @@ import {
   repairGlyphText,
 } from '../features/pdf-engine/utils';
 import { type ConfirmActionOptions, type PageMutationConfirmOptions, type TextAnnotation } from '../shared/types/pdf';
+import { type GlyphRepairReport } from '../shared/types/glyph';
 import { OCRService } from '../features/pdf-engine/ocrService';
 import { detectLanguage } from '../features/pdf-engine/languageDetector';
 import {
@@ -16,7 +17,9 @@ import {
   createIdleImportJob,
   createPagePlaceholders,
   importJobReducer,
+  isImportJobBlocking,
   isImportJobBusy,
+  markPendingAnalysisCancelled,
   orderImportedPagesForAnalysis,
 } from './importJob';
 import {
@@ -91,6 +94,20 @@ interface GlyphRepairPageOutcome {
   error?: string;
 }
 
+const getGlyphRepairValidationError = (report: GlyphRepairReport): string | null => {
+  const validation = report.validation;
+  if (!validation.reloaded) {
+    return 'Text repair output could not be reloaded for validation.';
+  }
+  if (validation.visualPagesCompared === 0) {
+    return 'Text repair output could not be visually validated.';
+  }
+  if (validation.maxChangedPixelRatio > 0.000001 || validation.maxChannelDelta > 0) {
+    return 'Text repair changed page appearance, so the repaired page was not applied.';
+  }
+  return null;
+};
+
 export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [documents, setDocuments] = useState<Record<string, PdfDocumentInfo>>({});
   const [pages, setPages] = useState<PdfPageInfo[]>([]);
@@ -126,6 +143,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const currentOcrJobIdRef = useRef(0);
   const currentGlyphJobIdRef = useRef(0);
   const currentGlyphTextRepairJobIdRef = useRef(0);
+  const currentPageReplacementIdRef = useRef(0);
   const ocrCancelRef = useRef(false);
   const glyphCancelRef = useRef(false);
   const glyphTextRepairCancelRef = useRef(false);
@@ -215,12 +233,21 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     err instanceof Error ? err.message : String(err)
   ), []);
 
+  const invalidatePageReplacementOperations = useCallback(() => {
+    currentPageReplacementIdRef.current += 1;
+  }, []);
+
   const cancelImport = useCallback(() => {
     const cancelledJobId = currentImportJobIdRef.current;
+    const cancelledJob = importJobRef.current;
     currentImportJobIdRef.current += 1;
 
     if (cancelledJobId > 0) {
       dispatchImportJob({ type: 'cancelled', jobId: cancelledJobId });
+    }
+
+    if (isImportJobBusy(cancelledJob)) {
+      setPages(prev => markPendingAnalysisCancelled(prev));
     }
   }, []);
 
@@ -397,7 +424,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const startGlyphDiagnostics = useCallback(async (pageIds: string[]) => {
     if (isImportJobBusy(importJobRef.current)) {
-      alert('Wait for the current import to finish before checking text.');
+      alert('Wait for the current PDFs to finish loading and analysis before checking text.');
       return;
     }
     if (isOcrJobBusy(ocrJobRef.current)) {
@@ -469,7 +496,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const startOcr = useCallback(async (pageIds: string[], options: OcrJobOptions) => {
     if (isImportJobBusy(importJobRef.current)) {
-      alert('Wait for the current import to finish before starting OCR.');
+      alert('Wait for the current PDFs to finish loading and analysis before starting OCR.');
       return;
     }
     if (isGlyphJobBusy(glyphJobRef.current)) {
@@ -632,10 +659,20 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
-  const startUndoTimer = useCallback((nextUndo: PendingUndoState) => {
+  const startUndoTimer = useCallback((nextUndo: PendingUndoState, options?: { focusUndo?: boolean }) => {
     clearUndoTimer();
     pausedUndoRemainingMsRef.current = null;
     setPendingUndoState(nextUndo);
+    if (options?.focusUndo) {
+      window.setTimeout(() => {
+        undoButtonRef.current?.focus();
+        if (document.activeElement === undoButtonRef.current && undoTimerRef.current !== null) {
+          pausedUndoRemainingMsRef.current = Math.max(nextUndo.expiresAt - Date.now(), 0);
+          window.clearTimeout(undoTimerRef.current);
+          undoTimerRef.current = null;
+        }
+      }, 0);
+    }
     const timeoutMs = Math.max(nextUndo.expiresAt - Date.now(), 0);
     undoTimerRef.current = window.setTimeout(() => {
       setPendingUndoState(null);
@@ -735,6 +772,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return {
       ...snapshotPage,
+      nativeAnalysis: currentPage.nativeAnalysis ?? snapshotPage.nativeAnalysis,
       analysis: currentPage.analysis ?? snapshotPage.analysis,
       analysisStatus: currentPage.analysisStatus ?? snapshotPage.analysisStatus,
       analysisError: currentPage.analysisError,
@@ -812,8 +850,8 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     },
     buildResult: (snapshot: PageStateSnapshot) => PageMutationResult | null,
   ) => {
-    if (isImportJobBusy(importJobRef.current) && !request.allowDuringImport) {
-      alert('Wait for the current import to finish before changing pages.');
+    if (isImportJobBlocking(importJobRef.current) && !request.allowDuringImport) {
+      alert('Wait for the current PDFs to finish loading before changing pages.');
       return;
     }
     if (isOcrJobBusy(ocrJobRef.current) && !request.allowDuringOcr) {
@@ -844,25 +882,29 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const result = buildResult(snapshot);
         setConfirmRequest(null);
         pausedUndoRemainingMsRef.current = null;
-        if (!result) return;
+        if (!result) {
+          window.setTimeout(() => confirmReturnFocusRef.current?.focus(), 0);
+          return;
+        }
 
         request.beforeApply?.();
+        invalidatePageReplacementOperations();
         applyMutationResult(result);
         startUndoTimer({
           description: request.undoDescription,
           expiresAt: Date.now() + UNDO_TIMEOUT_MS,
           snapshot,
-        });
+        }, { focusUndo: true });
       },
     });
-  }, [applyMutationResult, captureSnapshot, pauseUndoTimer, startUndoTimer]);
+  }, [applyMutationResult, captureSnapshot, invalidatePageReplacementOperations, pauseUndoTimer, startUndoTimer]);
 
   const commitImmediatePageMutation = useCallback((
     undoDescription: string,
     buildResult: (snapshot: PageStateSnapshot) => PageMutationResult | null,
   ) => {
-    if (isImportJobBusy(importJobRef.current)) {
-      alert('Wait for the current import to finish before changing pages.');
+    if (isImportJobBlocking(importJobRef.current)) {
+      alert('Wait for the current PDFs to finish loading before changing pages.');
       return;
     }
     if (isOcrJobBusy(ocrJobRef.current)) {
@@ -882,19 +924,25 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const result = buildResult(snapshot);
     if (!result) return;
 
+    invalidatePageReplacementOperations();
     applyMutationResult(result);
     startUndoTimer({
       description: undoDescription,
       expiresAt: Date.now() + UNDO_TIMEOUT_MS,
       snapshot,
     });
-  }, [applyMutationResult, captureSnapshot, startUndoTimer]);
+  }, [applyMutationResult, captureSnapshot, invalidatePageReplacementOperations, startUndoTimer]);
 
   const undoLastPageMutation = useCallback(() => {
     if (!pendingUndoState) return;
     clearUndoTimer();
     pausedUndoRemainingMsRef.current = null;
     setConfirmRequest(null);
+    invalidatePageReplacementOperations();
+    cancelImport();
+    cancelOcr();
+    cancelGlyphDiagnostics();
+    cancelGlyphTextRepairImmediately();
 
     const rebasedSnapshot = buildRebasedUndoSnapshot(
       pendingUndoState.snapshot,
@@ -907,7 +955,39 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRangeInput(rebasedSnapshot.rangeInput);
     setPendingUndoState(null);
     restartAnalysisRef.current(rebasedSnapshot.pages, rebasedSnapshot.documents, rebasedSnapshot.activePageId);
-  }, [buildRebasedUndoSnapshot, clearUndoTimer, pendingUndoState]);
+  }, [
+    buildRebasedUndoSnapshot,
+    cancelGlyphDiagnostics,
+    cancelGlyphTextRepairImmediately,
+    cancelImport,
+    cancelOcr,
+    clearUndoTimer,
+    invalidatePageReplacementOperations,
+    pendingUndoState,
+  ]);
+
+  useEffect(() => {
+    if (!pendingUndoState) return;
+
+    const handleUndoShortcut = (event: KeyboardEvent) => {
+      const target = event.target;
+      const isEditingText = target instanceof HTMLElement && (
+        target.isContentEditable ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      );
+      if (isEditingText || event.key.toLowerCase() !== 'z' || (!event.metaKey && !event.ctrlKey) || event.shiftKey || event.altKey) {
+        return;
+      }
+
+      event.preventDefault();
+      undoLastPageMutation();
+    };
+
+    window.addEventListener('keydown', handleUndoShortcut, true);
+    return () => window.removeEventListener('keydown', handleUndoShortcut, true);
+  }, [pendingUndoState, undoLastPageMutation]);
 
   const addAnnotation = useCallback((annot: TextAnnotation) => {
     setAnnotations(prev => [...prev, annot]);
@@ -1152,6 +1232,20 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return { status: 'skipped' };
       }
 
+      const validationError = getGlyphRepairValidationError(report);
+      if (validationError) {
+        setPages(prev => prev.map(page => page.id === pageId ? {
+          ...page,
+          glyphRepairStatus: 'failed',
+          glyphRepairError: validationError,
+          glyphRepairReport: report,
+          glyphDiagnostics: report.afterDiagnostics,
+          glyphDiagnosticsStatus: 'complete',
+          glyphDiagnosticsError: undefined,
+        } : page));
+        return { status: 'failed', error: validationError };
+      }
+
       const docId = uuidv4();
       const file = new File([blob], 'repaired_text.pdf', { type: 'application/pdf' });
       const repairedDocInfo = await loadPdfDocument(file, docId);
@@ -1195,7 +1289,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const repairGlyphTextPages = useCallback(async (pageIds: string[]) => {
     if (isImportJobBusy(importJobRef.current)) {
-      alert('Wait for the current import to finish before repairing text.');
+      alert('Wait for the current PDFs to finish loading and analysis before repairing text.');
       return;
     }
     if (isOcrJobBusy(ocrJobRef.current)) {
@@ -1306,35 +1400,57 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [repairGlyphTextPages]);
 
   const replacePage = useCallback(async (pageId: string, newBlob: Blob) => {
-    try {
-      const docId = uuidv4();
-      const file = new File([newBlob], "cleaned_page.pdf", { type: "application/pdf" });
-      const docInfo = await loadPdfDocument(file, docId);
-      const pageProxy = await docInfo.pdfjsDoc.getPage(1);
-      const analysis = await analyzePage(pageProxy);
+    const operationId = currentPageReplacementIdRef.current + 1;
+    currentPageReplacementIdRef.current = operationId;
+    const snapshot = captureSnapshot();
+    const pageIndex = pagesRef.current.findIndex(page => page.id === pageId);
+    if (pageIndex < 0) return;
+    const originalPage = pagesRef.current[pageIndex];
+    if (!originalPage) return;
+    const originalDocId = originalPage.docId;
+    const originalPageIndex = originalPage.originalPageIndex;
+    const isReplacementCurrent = () => (
+      currentPageReplacementIdRef.current === operationId &&
+      pagesRef.current.some(page => (
+        page.id === pageId &&
+        page.docId === originalDocId &&
+        page.originalPageIndex === originalPageIndex
+      ))
+    );
 
-      setDocuments(prev => ({ ...prev, [docId]: docInfo }));
-      setPages(prev => prev.map(p => p.id === pageId ? {
-        ...p,
-        docId,
-        originalPageIndex: 1,
-        analysis,
-        analysisStatus: 'complete',
-        analysisError: undefined,
-        ocrStatus: 'idle',
-        ocrError: undefined,
-        ocrResult: undefined,
-        glyphDiagnosticsStatus: 'idle',
-        glyphDiagnosticsError: undefined,
-        glyphDiagnostics: undefined,
-        glyphRepairStatus: 'idle',
-        glyphRepairError: undefined,
-        glyphRepairReport: undefined,
-      } : p));
-    } catch (err) {
-      console.error("Error replacing page", err);
-    }
-  }, []);
+    const docId = uuidv4();
+    const file = new File([newBlob], "cleaned_page.pdf", { type: "application/pdf" });
+    const docInfo = await loadPdfDocument(file, docId);
+    const pageProxy = await docInfo.pdfjsDoc.getPage(1);
+    const analysis = await analyzePage(pageProxy);
+    if (!isReplacementCurrent()) return;
+
+    setDocuments(prev => ({ ...prev, [docId]: docInfo }));
+    setPages(prev => prev.map(p => p.id === pageId ? {
+      ...p,
+      docId,
+      originalPageIndex: 1,
+      nativeAnalysis: analysis,
+      analysis,
+      analysisStatus: 'complete',
+      analysisError: undefined,
+      ocrStatus: 'idle',
+      ocrError: undefined,
+      ocrResult: undefined,
+      glyphDiagnosticsStatus: 'idle',
+      glyphDiagnosticsError: undefined,
+      glyphDiagnostics: undefined,
+      glyphRepairStatus: 'idle',
+      glyphRepairError: undefined,
+      glyphRepairReport: undefined,
+    } : p));
+    startUndoTimer({
+      description: `Cleaned OCR on page ${pageIndex + 1}`,
+      expiresAt: Date.now() + UNDO_TIMEOUT_MS,
+      snapshot,
+      exactRestorePageIds: new Set([pageId]),
+    }, { focusUndo: true });
+  }, [captureSnapshot, startUndoTimer]);
 
   const removePage = useCallback((id: string) => {
     setPages(prev => {
@@ -1380,6 +1496,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [activePageId]);
 
   const clearAll = useCallback(() => {
+    invalidatePageReplacementOperations();
     cancelImport();
     cancelOcr();
     cancelGlyphDiagnostics();
@@ -1389,7 +1506,13 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setActivePageId(null);
     setSelectedPageIds(new Set());
     setRangeInput('');
-  }, [cancelGlyphDiagnostics, cancelGlyphTextRepairImmediately, cancelImport, cancelOcr]);
+  }, [
+    cancelGlyphDiagnostics,
+    cancelGlyphTextRepairImmediately,
+    cancelImport,
+    cancelOcr,
+    invalidatePageReplacementOperations,
+  ]);
 
   const removePageWithUndo = useCallback((id: string) => {
     const pageIndex = pages.findIndex(page => page.id === id);
@@ -1675,8 +1798,8 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           onMouseEnter={pauseUndoTimer}
           onMouseLeave={resumePausedUndoTimer}
         >
-          <span>{pendingUndoState.description}</span>
-          <button ref={undoButtonRef} onClick={undoLastPageMutation}>Undo</button>
+          <span id="pending-undo-description">{pendingUndoState.description}</span>
+          <button ref={undoButtonRef} onClick={undoLastPageMutation} aria-describedby="pending-undo-description">Undo</button>
         </div>
       )}
     </PdfContext.Provider>

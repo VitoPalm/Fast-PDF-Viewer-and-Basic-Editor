@@ -1,13 +1,13 @@
 {
   "name": "fast-pdf-editor",
   "private": true,
-  "version": "1.8.0",
+  "version": "1.5.1",
   "description": "A high-performance, premium PDF viewer and editor.",
   "author": "Vito Palmieri <vito@example.com>",
   "type": "module",
   "main": "dist-electron/main.js",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "dev": "vite",
@@ -23,9 +23,9 @@
     "test:packaged": "npm run package:dir && playwright test --config=playwright.packaged.config.ts",
     "preview": "vite preview",
     "electron:build": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --publish always",
-    "electron:build:win": "npm run version:sync:git && npm run build:glyph-sidecar && vite build && electron-builder --win",
-    "electron:build:mac": "npm run version:sync:git && npm run build:glyph-sidecar && vite build && electron-builder --mac",
-    "electron:build:linux": "npm run version:sync:git && npm run build:glyph-sidecar && vite build && electron-builder --linux"
+    "electron:build:win": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --win",
+    "electron:build:mac": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --mac",
+    "electron:build:linux": "npm run version:sync:git && npm run build:glyph-sidecar && tsc -b && vite build && electron-builder --linux"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",

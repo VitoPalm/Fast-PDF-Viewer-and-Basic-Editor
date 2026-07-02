@@ -1,5 +1,5 @@
 import { isSuspectTextHealth } from '../features/pdf-engine/textLayerHealth';
-import { type PdfPageInfo } from '../features/pdf-engine/utils';
+import { getNativePageAnalysis, type PdfPageInfo } from '../features/pdf-engine/utils';
 import {
   type GlyphDiagnosticsReport,
   type GlyphDiagnosticsStatus,
@@ -138,7 +138,8 @@ export const getGlyphDiagnosticsCandidatePages = (
   return pages.filter(page => {
     if (!requested.has(page.id)) return false;
     if (page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running') return false;
-    return page.analysis ? isSuspectTextHealth(page.analysis.textHealth) : true;
+    const nativeAnalysis = getNativePageAnalysis(page);
+    return nativeAnalysis ? isSuspectTextHealth(nativeAnalysis.textHealth) : true;
   });
 };
 

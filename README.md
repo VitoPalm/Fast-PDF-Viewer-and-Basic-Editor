@@ -46,9 +46,14 @@ Antigravity PDF is built on a modern, decoupled architecture designed for perfor
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 22 or higher
+- Node.js 22.12.0 or higher
 - npm
 - Java 21 or higher and Maven, required to build the PDFBox glyph diagnostics sidecar
+- Java 21 or higher at runtime for packaged text checks and text repair, unless the build is changed to bundle a Java runtime
+
+### Runtime Notes
+- Clean OCR bundles GhostPDL/Ghostscript through `@okathira/ghostpdl-wasm`, which is licensed under AGPL-3.0-or-later.
+- OCR language data and some PDF.js CMap/standard-font resources are still loaded from dependency-managed network URLs; fully offline packaging remains follow-up work.
 
 ### Installation
 1. Clone the repository:
@@ -91,7 +96,7 @@ Artifacts will be generated in the `release/` directory.
 
 ## 📄 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+This project does not currently publish a single permissive project license. Distributed builds include `@okathira/ghostpdl-wasm`/GhostPDL components under AGPL-3.0-or-later for Clean OCR, and all third-party dependencies retain their own licenses.
 
 ---
 
