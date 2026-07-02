@@ -24,3 +24,45 @@
   width: 64px;
   height: 64px;
 }
+
+.upload-progress {
+  width: min(100%, 380px);
+  margin-top: 22px;
+  padding: 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--border-radius-md);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.upload-progress-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-progress-label span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-progress-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-highlight);
+}
+
+.upload-progress-bar > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-color);
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: width 0.2s ease;
+}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { DragDropContext, Droppable, Draggable, type DropResult, type DraggableProvided } from '@hello-pangea/dnd';
-import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable, type DragStart, type DropResult, type DraggableProvided } from '@hello-pangea/dnd';
+import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare, Sparkles } from 'lucide-react';
 import { usePdf } from '../../shared/hooks/usePdf';
 import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 import { PageRangeBar } from '../batch-ops/PageRangeBar';
@@ -11,12 +11,15 @@ import './Sidebar.css';
 const ITEM_HEIGHT = 88;
 const OVERSCAN = 5;
 
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
 export const Sidebar: React.FC = () => {
   const {
-    pages, setPages, activePageId, setActivePageId,
-    removePage, removePages, documents,
+    pages, activePageId, setActivePageId,
+    removePageWithUndo, removePagesWithUndo, documents,
     selectedPageIds, togglePageSelection, selectPageRange,
-    selectAll, clearSelection, invertSelection
+    selectAll, clearSelection, invertSelection, setOcrQueue,
+    reorderSelectedPages,
   } = usePdf();
   
   const [sidebarWidth, setSidebarWidth] = useState(300);
@@ -25,6 +28,7 @@ export const Sidebar: React.FC = () => {
   const [containerHeight, setContainerHeight] = useState(600);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  const [draggingPageId, setDraggingPageId] = useState<string | null>(null);
 
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -60,49 +64,62 @@ export const Sidebar: React.FC = () => {
   const startIndex = Math.max(0, Math.floor(scrollOffset / ITEM_HEIGHT) - OVERSCAN);
   const endIndex = Math.min(pages.length - 1, Math.ceil((scrollOffset + containerHeight) / ITEM_HEIGHT) + OVERSCAN);
   const totalScrollHeight = pages.length * ITEM_HEIGHT;
+  const virtualScrollHeight = totalScrollHeight + (draggingPageId ? ITEM_HEIGHT : 0);
+  const activePageIndex = useMemo(
+    () => pages.findIndex(page => page.id === activePageId),
+    [pages, activePageId],
+  );
 
-  const handleDragStart = useCallback((start: { draggableId: string }) => {
-    const draggedId = start.draggableId;
-    if (selectedPageIds.has(draggedId)) {
-      const items = Array.from(pages);
-      const selectedIndices = items.map((p, i) => selectedPageIds.has(p.id) ? i : -1).filter(i => i !== -1);
-      const firstSelectedIndex = selectedIndices[0];
-      
-      const selectedItems = selectedIndices.map(i => items[i]);
-      const remainingItems = items.filter(p => !selectedPageIds.has(p.id));
-      
-      const updated = [...remainingItems];
-      updated.splice(firstSelectedIndex, 0, ...selectedItems);
-      setPages(updated);
+  const setSidebarScrollTop = useCallback((nextScrollTop: number) => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const maxScrollTop = Math.max(totalScrollHeight - el.clientHeight, 0);
+    const clampedScrollTop = clamp(nextScrollTop, 0, maxScrollTop);
+
+    el.scrollTop = clampedScrollTop;
+    setScrollOffset(clampedScrollTop);
+  }, [totalScrollHeight]);
+
+  const scrollPageIntoView = useCallback((pageIndex: number) => {
+    const el = scrollContainerRef.current;
+    if (!el || pageIndex < 0) return;
+
+    const itemTop = pageIndex * ITEM_HEIGHT;
+    const itemBottom = itemTop + ITEM_HEIGHT;
+    const viewTop = el.scrollTop;
+    const viewBottom = viewTop + el.clientHeight;
+
+    if (itemTop >= viewTop && itemBottom <= viewBottom) return;
+
+    const centeredScrollTop = itemTop - Math.max((el.clientHeight - ITEM_HEIGHT) / 2, 0);
+    setSidebarScrollTop(centeredScrollTop);
+  }, [setSidebarScrollTop]);
+
+  useEffect(() => {
+    if (activePageIndex === -1) return;
+
+    scrollPageIntoView(activePageIndex);
+  }, [activePageIndex, scrollPageIntoView]);
+
+  const handleDragStart = useCallback((start: DragStart) => {
+    setDraggingPageId(start.draggableId);
+  }, []);
+
+  const handleDragEnd = useCallback((result: DropResult) => {
+    setDraggingPageId(null);
+
+    if (
+      result.reason === 'CANCEL' ||
+      !result.destination ||
+      result.destination.droppableId !== result.source.droppableId ||
+      result.destination.index === result.source.index
+    ) {
+      return;
     }
-  }, [pages, selectedPageIds, setPages]);
 
-  const handleDragEnd = (result: DropResult) => {
-    if (!result.destination) return;
-    const sourceIndex = result.source.index;
-    const destinationIndex = result.destination.index;
-    if (sourceIndex === destinationIndex) return;
-
-    const items = Array.from(pages);
-    const draggedId = items[sourceIndex].id;
-
-    if (selectedPageIds.has(draggedId)) {
-      // In onDragStart we already grouped them. 
-      // Now we just need to move the block to the destinationIndex.
-      const selectedIndices = items.map((p, i) => selectedPageIds.has(p.id) ? i : -1).filter(i => i !== -1);
-      const selectedItems = selectedIndices.map(i => items[i]);
-      const remainingItems = items.filter(p => !selectedPageIds.has(p.id));
-      
-      const updated = [...remainingItems];
-      updated.splice(destinationIndex, 0, ...selectedItems);
-      setPages(updated);
-    } else {
-      // Single item drag
-      const [reorderedItem] = items.splice(sourceIndex, 1);
-      items.splice(destinationIndex, 0, reorderedItem);
-      setPages(items);
-    }
-  };
+    reorderSelectedPages(result.draggableId, result.destination.index);
+  }, [reorderSelectedPages]);
 
   const handleItemClick = useCallback((index: number, e: React.MouseEvent) => {
     const page = pages[index];
@@ -156,8 +173,8 @@ export const Sidebar: React.FC = () => {
   }, [rangeInput, setRangeInput]);
 
   const handleRemoveSelected = useCallback(() => {
-    removePages(Array.from(selectedPageIds));
-  }, [removePages, selectedPageIds]);
+    removePagesWithUndo(Array.from(selectedPageIds));
+  }, [removePagesWithUndo, selectedPageIds]);
 
   const handleScroll = useCallback(() => {
     if (scrollContainerRef.current) {
@@ -166,13 +183,11 @@ export const Sidebar: React.FC = () => {
   }, []);
 
   const handleMinimapScrollTo = useCallback((pageIndex: number) => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = pageIndex * ITEM_HEIGHT;
-    }
+    setSidebarScrollTop(pageIndex * ITEM_HEIGHT);
     if (pages[pageIndex]) {
       setActivePageId(pages[pageIndex].id);
     }
-  }, [pages, setActivePageId]);
+  }, [pages, setActivePageId, setSidebarScrollTop]);
 
   const hasSelection = selectedPageIds.size > 0;
 
@@ -225,7 +240,7 @@ export const Sidebar: React.FC = () => {
                   onScroll={handleScroll}
                   style={{ flex: 1, overflowY: 'auto', position: 'relative' }}
                 >
-                  <div style={{ height: totalScrollHeight, position: 'relative' }}>
+                  <div style={{ height: virtualScrollHeight, position: 'relative' }}>
                     {visibleItems.map(({ page, index }) => (
                       <Draggable key={page.id} draggableId={page.id} index={index}>
                         {(provided, snapshot) => (
@@ -239,7 +254,7 @@ export const Sidebar: React.FC = () => {
                             docName={documents[page.docId]?.name ?? ''}
                             onClick={(e) => handleItemClick(index, e)}
                             onDoubleClick={() => handleItemDoubleClick(index)}
-                            onRemove={() => removePage(page.id)}
+                            onRemove={() => removePageWithUndo(page.id)}
                             style={{
                               position: 'absolute',
                               top: index * ITEM_HEIGHT,
@@ -252,7 +267,6 @@ export const Sidebar: React.FC = () => {
                       </Draggable>
                     ))}
                   </div>
-                  {droppableProvided.placeholder}
                 </div>
               )}
             </Droppable>
@@ -281,6 +295,20 @@ export const Sidebar: React.FC = () => {
               </button>
               <button className="batch-btn" onClick={clearSelection} title="Clear selection">
                 <XSquare size={14} />
+              </button>
+              <button className="batch-btn" style={{ color: 'var(--accent-color)' }} onClick={async () => {
+                const selectedScanned = pages.filter(p => selectedPageIds.has(p.id) && p.analysis?.isScanned);
+                if (selectedScanned.length === 0) {
+                  alert("No scanned pages found in selection.");
+                  return;
+                }
+                if (!confirm(`Run OCR on ${selectedScanned.length} pages? This might take a while.`)) return;
+
+                // Start batch OCR in context
+                const ids = selectedScanned.map(p => p.id);
+                setOcrQueue(ids);
+              }} title="OCR Selected Pages">
+                <Sparkles size={14} />
               </button>
             </div>
           </div>
@@ -327,7 +355,24 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
         <div {...dragHandleProps} className="drag-handle">
           <GripVertical size={14} />
         </div>
-        <LazyThumbnail page={page} />
+        <div style={{ position: 'relative' }}>
+          <LazyThumbnail page={page} />
+          {(page.analysisStatus === 'pending' || page.analysisStatus === 'running') && (
+            <div className="thumbnail-analysis-badge" title="Analyzing page">
+              <Sparkles size={10} />
+            </div>
+          )}
+          {page.analysisStatus === 'failed' && (
+            <div className="thumbnail-analysis-badge failed" title={page.analysisError ?? 'Page analysis failed'}>
+              !
+            </div>
+          )}
+          {page.analysis?.isScanned && (
+            <div className="thumbnail-ocr-badge" title="Scanned page (needs OCR)">
+              <Sparkles size={10} />
+            </div>
+          )}
+        </div>
         <div className="thumbnail-info">
           <div className="thumbnail-page-num">Page {index + 1}</div>
           <div className="thumbnail-doc-name" title={docName}>{docName}</div>

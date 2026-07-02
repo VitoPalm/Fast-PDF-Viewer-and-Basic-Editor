@@ -212,6 +212,49 @@
   animation: fadeIn 0.15s ease;
 }
 
+.thumbnail-ocr-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--accent-color);
+  color: white;
+  padding: 3px;
+  border-radius: 5px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+  animation: fadeIn 0.3s ease;
+}
+
+.thumbnail-analysis-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: rgba(20, 22, 28, 0.88);
+  color: var(--accent-color);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 11;
+  animation: analysisPulse 1.5s ease-in-out infinite;
+}
+
+.thumbnail-analysis-badge.failed {
+  color: var(--danger-color);
+  border-color: rgba(239, 68, 68, 0.45);
+  animation: none;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+@keyframes analysisPulse {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
 .thumbnail-remove {
   width: 28px;
   height: 28px;

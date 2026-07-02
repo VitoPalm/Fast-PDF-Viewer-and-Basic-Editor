@@ -1,4 +1,5 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
+import gsWasm from '@okathira/ghostpdl-wasm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +28,43 @@ process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.
 let win: BrowserWindow | null;
 // 🚧 Use ['ENV_NAME'] avoid vite:define dev replacement
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
+
+ipcMain.handle('convert-text-to-paths', async (event, pdfBytes: Uint8Array, pageIndex: number) => {
+  try {
+    const instance = await gsWasm();
+    const inputFilename = `/input-${Date.now()}.pdf`;
+    const outputFilename = `/output-${Date.now()}.pdf`;
+
+    // Write the raw bytes into the WebAssembly virtual file system
+    instance.FS.writeFile(inputFilename, pdfBytes);
+
+    // Ghostscript command to convert fonts to paths for a specific page.
+    const pageNum = pageIndex + 1;
+    const args = [
+      '-o', outputFilename,
+      '-sDEVICE=pdfwrite',
+      '-dNoOutputFonts',
+      `-dFirstPage=${pageNum}`,
+      `-dLastPage=${pageNum}`,
+      inputFilename
+    ];
+
+    // Execute Ghostscript inside WASM
+    instance.callMain(args);
+
+    // Read the output from the virtual file system
+    const outputBytes = instance.FS.readFile(outputFilename);
+
+    // Cleanup virtual file system
+    instance.FS.unlink(inputFilename);
+    instance.FS.unlink(outputFilename);
+
+    return outputBytes;
+  } catch (err) {
+    console.error("Ghostscript WASM conversion failed:", err);
+    throw err;
+  }
+});
 
 function createWindow() {
   win = new BrowserWindow({

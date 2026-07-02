@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { usePdf } from '../../shared/hooks/usePdf';
 import { ChevronUp, ChevronDown } from 'lucide-react';
+import { getMinimapPageIndexFromPoint, getMinimapViewport } from './minimapMath';
 import './Minimap.css';
 
 interface DocumentMinimapProps {
@@ -31,12 +32,18 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
   const PAGE_LINE_HEIGHT = 3;
   const GAP = 1;
   const CANVAS_WIDTH = 24;
-  const totalHeight = pages.length * (PAGE_LINE_HEIGHT + GAP);
-
-  // Calculate viewport indicator position and size
-  const viewportRatio = listHeight / Math.max(totalScrollHeight, 1);
-  const viewportTop = (scrollOffset / Math.max(totalScrollHeight, 1)) * totalHeight;
-  const viewportHeight = Math.max(viewportRatio * totalHeight, 12);
+  const {
+    totalHeight,
+    top: viewportTop,
+    height: viewportHeight,
+  } = getMinimapViewport({
+    pageCount: pages.length,
+    pageLineHeight: PAGE_LINE_HEIGHT,
+    gap: GAP,
+    listHeight,
+    listScrollOffset: scrollOffset,
+    listTotalHeight: totalScrollHeight,
+  });
 
   // Sticky Scroll Logic: Keep the indicator within the minimap's visible area
   useEffect(() => {
@@ -101,25 +108,35 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
     });
   }, [pages, activePageId, selectedPageIds, totalHeight]);
 
-  const handleClick = useCallback((e: React.MouseEvent) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const y = e.clientY - rect.top;
-    const pageIndex = Math.floor(y / (PAGE_LINE_HEIGHT + GAP));
-    if (pageIndex >= 0 && pageIndex < pages.length) {
+  const scrollToClientY = useCallback((clientY: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const rect = el.getBoundingClientRect();
+    const pageIndex = getMinimapPageIndexFromPoint({
+      clientY,
+      containerTop: rect.top,
+      minimapScrollTop: el.scrollTop,
+      pageCount: pages.length,
+      pageLineHeight: PAGE_LINE_HEIGHT,
+      gap: GAP,
+    });
+
+    if (pageIndex !== null) {
       onScrollTo(pageIndex);
     }
   }, [pages.length, onScrollTo]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
     setIsDragging(true);
-    handleClick(e);
-  }, [handleClick]);
+    scrollToClientY(e.clientY);
+  }, [scrollToClientY]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isDragging) return;
-    handleClick(e);
-  }, [isDragging, handleClick]);
+    scrollToClientY(e.clientY);
+  }, [isDragging, scrollToClientY]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
@@ -127,11 +144,16 @@ export const DocumentMinimap: React.FC<DocumentMinimapProps> = ({
 
   useEffect(() => {
     if (isDragging) {
+      const move = (e: MouseEvent) => scrollToClientY(e.clientY);
       const up = () => setIsDragging(false);
+      window.addEventListener('mousemove', move);
       window.addEventListener('mouseup', up);
-      return () => window.removeEventListener('mouseup', up);
+      return () => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+      };
     }
-  }, [isDragging]);
+  }, [isDragging, scrollToClientY]);
 
   if (pages.length < 20) return null; // Don't show minimap for small docs
 

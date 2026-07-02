@@ -12,6 +12,7 @@ dist
 dist-ssr
 dist-electron
 release
+output
 *.local
 
 # Editor directories and files
@@ -24,5 +25,6 @@ release
 *.njsproj
 *.sln
 *.sw?
+*.code-workspace
 building.sh
 test.sh

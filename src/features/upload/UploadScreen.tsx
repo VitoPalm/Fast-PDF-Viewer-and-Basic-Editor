@@ -1,14 +1,35 @@
 import React, { useCallback, useState } from 'react';
 import { UploadCloud, FileText } from 'lucide-react';
 import clsx from 'clsx';
+import { getImportJobProgress, isImportJobVisible, type ImportJob } from '../../context/importJob';
 import './UploadScreen.css';
 
 interface UploadScreenProps {
   onUpload: (files: File[]) => void;
+  importJob: ImportJob;
 }
 
-export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload }) => {
+const formatUploadImportStatus = (job: ImportJob): string => {
+  switch (job.phase) {
+    case 'reading':
+      return `Preparing ${job.filesTotal} file${job.filesTotal === 1 ? '' : 's'}...`;
+    case 'loading':
+      return job.currentFileName ? `Reading ${job.currentFileName}` : 'Reading PDF...';
+    case 'instantiating':
+      return `${job.pagesInstantiated}/${job.pagesTotal} pages ready`;
+    case 'analyzing':
+      return `Analyzing ${job.pagesAnalyzed}/${job.pagesTotal} pages`;
+    case 'failed':
+      return job.error ? `Import failed: ${job.error}` : 'Import failed';
+    default:
+      return 'Importing PDFs...';
+  }
+};
+
+export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload, importJob }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const showImportProgress = isImportJobVisible(importJob);
+  const importProgress = getImportJobProgress(importJob);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -82,6 +103,17 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onUpload }) => {
           <div className="btn btn-primary">
             <FileText size={18} /> Select PDF Files
           </div>
+          {showImportProgress && (
+            <div className="upload-progress" data-testid="upload-import-progress">
+              <div className="upload-progress-label">
+                <span>{formatUploadImportStatus(importJob)}</span>
+                <span>{importProgress}%</span>
+              </div>
+              <div className="upload-progress-bar" aria-hidden="true">
+                <div style={{ width: `${importProgress}%` }} />
+              </div>
+            </div>
+          )}
         </label>
       </div>
     </div>

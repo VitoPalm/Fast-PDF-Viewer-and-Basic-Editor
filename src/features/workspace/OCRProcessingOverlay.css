@@ -1,0 +1,106 @@
+.ocr-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.scanning-line {
+  position: absolute;
+  top: -10%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
+  box-shadow: 0 0 20px var(--accent-color);
+  animation: scan 2.5s ease-in-out infinite;
+  z-index: 51;
+}
+
+@keyframes scan {
+  0% { top: -10%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 110%; opacity: 0; }
+}
+
+.ocr-status-card {
+  width: 320px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  background: rgba(20, 22, 28, 0.85) !important;
+  border: 1px solid var(--surface-border);
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+  animation: slide-up 0.4s ease-out;
+}
+
+@keyframes slide-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.ocr-info {
+  width: 100%;
+  text-align: center;
+}
+
+.ocr-info h3 {
+  margin: 0 0 8px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ocr-info p {
+  margin: 0 0 16px 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.ocr-progress-container {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.ocr-progress-bar {
+  height: 100%;
+  background: var(--accent-color);
+  box-shadow: 0 0 10px var(--accent-glow);
+  transition: width 0.3s ease;
+}
+
+.ocr-percentage {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent-color);
+}
+
+.ocr-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
