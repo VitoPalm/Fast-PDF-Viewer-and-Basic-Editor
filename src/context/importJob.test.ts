@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type PdfPageInfo } from '../features/pdf-engine/utils';
+import { type PageAnalysis, type PdfPageInfo } from '../features/pdf-engine/utils';
 import {
   applyPageAnalysisUpdateForJob,
   createIdleImportJob,
@@ -7,6 +7,16 @@ import {
   importJobReducer,
   orderImportedPagesForAnalysis,
 } from './importJob';
+
+const healthyAnalysis: PageAnalysis = {
+  hasText: true,
+  hasOCR: false,
+  isScanned: false,
+  textHealth: 'healthy',
+  textHealthReasons: [],
+  textItemCount: 12,
+  textSample: 'Readable page text',
+};
 
 describe('import job state', () => {
   it('tracks file, placeholder, and analysis progress transitions', () => {
@@ -48,6 +58,22 @@ describe('import job state', () => {
     job = importJobReducer(job, { type: 'completed', jobId: 4 });
 
     expect(job.phase).toBe('cancelled');
+  });
+
+  it('can restart analysis for restored pending pages without file loading progress', () => {
+    const job = importJobReducer(createIdleImportJob(), {
+      type: 'analysis-only-started',
+      jobId: 5,
+      pagesTotal: 3,
+    });
+
+    expect(job).toMatchObject({
+      id: 5,
+      phase: 'analyzing',
+      pagesTotal: 3,
+      pagesInstantiated: 3,
+      filesTotal: 0,
+    });
   });
 });
 
@@ -111,12 +137,12 @@ describe('import page helpers', () => {
       jobId: 1,
       pageId: 'p1',
       status: 'complete',
-      analysis: { hasText: true, hasOCR: false, isScanned: false },
+      analysis: healthyAnalysis,
     });
 
     expect(complete[0]).toMatchObject({
       analysisStatus: 'complete',
-      analysis: { hasText: true, hasOCR: false, isScanned: false },
+      analysis: { hasText: true, hasOCR: false, isScanned: false, textHealth: 'healthy' },
     });
 
     const failed = applyPageAnalysisUpdateForJob(complete, {
@@ -138,7 +164,7 @@ describe('import page helpers', () => {
       jobId: 1,
       pageId: 'p1',
       status: 'complete',
-      analysis: { hasText: true, hasOCR: false, isScanned: false },
+      analysis: healthyAnalysis,
     });
 
     expect(next).toBeInstanceOf(Array);

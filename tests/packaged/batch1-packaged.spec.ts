@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { PDFDocument, rgb } from 'pdf-lib';
 import { launchPackagedApp, loadPdf } from './packagedApp';
 
 const fixtureDir = process.env.PDF_UI_FIXTURE_DIR ?? '/tmp/antigravity-pdf-ui-fixtures';
@@ -9,6 +10,16 @@ const fixtures = {
   stats27: path.join(fixtureDir, 'stats_note_27p_low_text.pdf'),
   slides62: path.join(fixtureDir, 'oop_gui_db_usecases_62p_slides.pdf'),
   sparse665: path.join(fixtureDir, 'db_book_665p_sparse_text.pdf'),
+};
+
+type CleanOcrResultLike =
+  | { ok: true; pdfBytes: Uint8Array }
+  | { ok: false; error: { code: string; message: string } };
+
+type PackagedBridgeWindow = Window & {
+  antigravityPdf?: {
+    cleanOcrPage(input: { pdfBytes: Uint8Array; pageNumber: number }): Promise<CleanOcrResultLike>;
+  };
 };
 
 function requireFixture(filePath: string) {
@@ -52,7 +63,68 @@ async function confirmDialogAction(page: Page, dialogName: RegExp, actionName: s
   await expect(dialog).toBeHidden();
 }
 
+async function createCleanOcrProbePdfBytes() {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([180, 120]);
+  page.drawText('Clean OCR probe', {
+    x: 24,
+    y: 64,
+    size: 14,
+    color: rgb(0, 0, 0),
+  });
+  return new Uint8Array(await pdf.save());
+}
+
 test.describe('Packaged app Batch 1 smoke regressions', () => {
+  test('packaged preload exposes typed Clean OCR bridge and rejects invalid input', async ({ browserName }, testInfo) => {
+    void browserName;
+    const { electronApp, page } = await launchPackagedApp(testInfo);
+
+    try {
+      const bridgeShape = await page.evaluate(() => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        return {
+          hasBridge: Boolean(bridge),
+          hasCleanOcrPage: typeof bridge?.cleanOcrPage === 'function',
+        };
+      });
+
+      expect(bridgeShape).toEqual({ hasBridge: true, hasCleanOcrPage: true });
+
+      const invalidResult = await page.evaluate(async () => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        if (!bridge) {
+          return { ok: false, error: { code: 'missing-bridge', message: 'Missing bridge.' } };
+        }
+        return bridge.cleanOcrPage({ pdfBytes: new Uint8Array(), pageNumber: 1 });
+      });
+
+      expect(invalidResult).toMatchObject({
+        ok: false,
+        error: { code: 'invalid-input' },
+      });
+
+      const validPdfBytes = await createCleanOcrProbePdfBytes();
+      const validResult = await page.evaluate(async (bytes) => {
+        const bridge = (window as PackagedBridgeWindow).antigravityPdf;
+        if (!bridge) {
+          return { ok: false, error: { code: 'missing-bridge', message: 'Missing bridge.' } };
+        }
+        const result = await bridge.cleanOcrPage({ pdfBytes: new Uint8Array(bytes), pageNumber: 1 });
+        return result.ok
+          ? { ok: true, byteLength: result.pdfBytes.byteLength }
+          : result;
+      }, Array.from(validPdfBytes));
+
+      expect(validResult.ok).toBe(true);
+      if (validResult.ok) {
+        expect(validResult.byteLength).toBeGreaterThan(0);
+      }
+    } finally {
+      await electronApp.close();
+    }
+  });
+
   test('loads the packaged app, opens a PDF, and keeps invalid mixed range actions disabled', async ({ browserName }, testInfo) => {
     void browserName;
     requireFixture(fixtures.stats27);
@@ -82,8 +154,9 @@ test.describe('Packaged app Batch 1 smoke regressions', () => {
       await loadPdf(page, fixtures.stats27, 27, testInfo);
       await fillRange(page, '2-3');
       await page.getByRole('button', { name: 'Remove', exact: true }).first().click();
-      await confirmDialogAction(page, /remove selected pages/i, 'Remove');
+      await confirmDialogAction(page, /remove pages in range/i, 'Remove');
       await expect(page.locator('.page-count-badge')).toHaveText('25');
+      await expect(page.locator('.page-range-input')).toHaveValue('');
 
       const undoToast = page.getByRole('status').filter({ hasText: /Removed 2 pages/i });
       await expect(undoToast).toBeVisible();

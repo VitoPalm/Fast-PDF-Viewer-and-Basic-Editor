@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import { PDFDocument, rgb, PDFOperator, PDFOperatorNames, PDFName } from 'pdf-lib';
+import { PDFDocument, rgb, PDFOperator, PDFOperatorNames, PDFNumber } from 'pdf-lib';
 import { type TextAnnotation } from '../../shared/types/pdf';
+import { analyzeTextLayerHealth, type TextLayerHealthStatus } from './textLayerHealth';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -34,26 +35,113 @@ export interface PageAnalysis {
   hasText: boolean;
   hasOCR: boolean; // Detected invisible text layer
   isScanned: boolean;
+  textHealth: TextLayerHealthStatus;
+  textHealthReasons: string[];
+  textItemCount: number;
+  textSample: string;
 }
 
+export const isAnalysisOcrCandidate = (analysis: PageAnalysis | null | undefined): boolean => (
+  analysis?.isScanned === true ||
+  analysis?.textHealth === 'suspectEncoding' ||
+  analysis?.textHealth === 'unsupported'
+);
+
+export const isNativeHiddenOcrAnalysis = (analysis: PageAnalysis | null | undefined): boolean => (
+  analysis?.textHealth === 'hiddenOcr'
+);
+
+const HIDDEN_TEXT_RATIO_THRESHOLD = 0.8;
+
+const textShowOperators = new Set<number>([
+  pdfjsLib.OPS.showText,
+  pdfjsLib.OPS.showSpacedText,
+  pdfjsLib.OPS.nextLineShowText,
+  pdfjsLib.OPS.nextLineSetSpacingShowText,
+].filter((op): op is number => typeof op === 'number'));
+
+const detectHiddenTextOperatorRatio = async (page: pdfjsLib.PDFPageProxy): Promise<number | null> => {
+  try {
+    const operatorList = await page.getOperatorList();
+    let textRenderingMode = 0;
+    const textRenderingModeStack: number[] = [];
+    let textShowCount = 0;
+    let hiddenTextShowCount = 0;
+
+    operatorList.fnArray.forEach((fn, index) => {
+      if (fn === pdfjsLib.OPS.save) {
+        textRenderingModeStack.push(textRenderingMode);
+        return;
+      }
+
+      if (fn === pdfjsLib.OPS.restore) {
+        textRenderingMode = textRenderingModeStack.pop() ?? 0;
+        return;
+      }
+
+      if (fn === pdfjsLib.OPS.setTextRenderingMode) {
+        const args = operatorList.argsArray[index] as unknown;
+        const nextMode = Array.isArray(args) ? Number(args[0]) : Number(args);
+        if (Number.isFinite(nextMode)) {
+          textRenderingMode = nextMode;
+        }
+        return;
+      }
+
+      if (!textShowOperators.has(fn)) return;
+      textShowCount += 1;
+      if (textRenderingMode === 3) {
+        hiddenTextShowCount += 1;
+      }
+    });
+
+    return textShowCount === 0 ? null : hiddenTextShowCount / textShowCount;
+  } catch (err) {
+    console.warn('PDF operator analysis failed', err);
+    return null;
+  }
+};
+
 export const analyzePage = async (page: pdfjsLib.PDFPageProxy): Promise<PageAnalysis> => {
-  const textContent = await page.getTextContent();
-  const hasText = textContent.items.length > 0;
+  try {
+    const textContent = await page.getTextContent();
+    const baseHealth = analyzeTextLayerHealth(textContent);
+    const operatorHiddenTextRatio = await detectHiddenTextOperatorRatio(page);
+    const health = (
+      baseHealth.status !== 'imageOnly' &&
+      operatorHiddenTextRatio !== null &&
+      operatorHiddenTextRatio >= HIDDEN_TEXT_RATIO_THRESHOLD
+    ) ? {
+      ...baseHealth,
+      status: 'hiddenOcr' as const,
+      reasons: Array.from(new Set([...baseHealth.reasons, 'mostly-hidden-text-operators'])),
+      hiddenTextRatio: Math.max(baseHealth.hiddenTextRatio, operatorHiddenTextRatio),
+    } : baseHealth;
+    const hasText = health.itemCount > 0 && health.status !== 'imageOnly';
+    const hasOCR = health.status === 'hiddenOcr';
+    const isScanned = health.status === 'imageOnly' || health.status === 'sparse';
 
-  const hasRenderingMode = (item: unknown): item is { renderingMode: number } => (
-    typeof item === 'object' &&
-    item !== null &&
-    'renderingMode' in item &&
-    typeof (item as { renderingMode?: unknown }).renderingMode === 'number'
-  );
-
-  // OCR detection: check if all text is hidden (renderingMode 3)
-  const hasOCR = hasText && textContent.items.some(item => hasRenderingMode(item) && item.renderingMode === 3);
-
-  // If there's no text, or only very little text compared to what might be expected, it's likely scanned.
-  const isScanned = !hasText || (hasText && textContent.items.length < 5);
-
-  return { hasText, hasOCR, isScanned };
+    return {
+      hasText,
+      hasOCR,
+      isScanned,
+      textHealth: health.status,
+      textHealthReasons: health.reasons,
+      textItemCount: health.itemCount,
+      textSample: health.sample,
+    };
+  } catch (err) {
+    console.warn('PDF text analysis failed', err);
+    return {
+      hasText: false,
+      hasOCR: false,
+      isScanned: false,
+      textHealth: 'unsupported',
+      textHealthReasons: ['text-extraction-failed'],
+      textItemCount: 0,
+      textSample: '',
+    };
+  }
 };
 
 export const analyzeDocument = async (pdfjsDoc: pdfjsLib.PDFDocumentProxy): Promise<PageAnalysis[]> => {
@@ -84,6 +172,10 @@ export const loadPdfDocument = async (file: File, docId: string): Promise<PdfDoc
     pageCount: pdfjsDoc.numPages
   };
 };
+
+export function createTextRenderingModeOperator(mode: number): PDFOperator {
+  return PDFOperator.of(PDFOperatorNames.SetTextRenderingMode, [PDFNumber.of(mode)]);
+}
 
 export const exportModifiedPdf = async (
   documents: Record<string, PdfDocumentInfo>,
@@ -118,9 +210,7 @@ export const exportModifiedPdf = async (
     // so we use coordinates directly without dividing by scale.
     if (pageInfo.ocrResult) {
       // Set rendering mode to invisible (3)
-      copiedPage.pushOperators(
-        PDFOperator.of(PDFOperatorNames.SetTextRenderingMode, [PDFName.of('3')])
-      );
+      copiedPage.pushOperators(createTextRenderingModeOperator(3));
 
       for (const item of pageInfo.ocrResult.items) {
         const x = item.transform[4];
@@ -134,9 +224,7 @@ export const exportModifiedPdf = async (
       }
 
       // Reset rendering mode to fill (0)
-      copiedPage.pushOperators(
-        PDFOperator.of(PDFOperatorNames.SetTextRenderingMode, [PDFName.of('0')])
-      );
+      copiedPage.pushOperators(createTextRenderingModeOperator(0));
     }
 
     // 2. Apply user annotations
@@ -166,14 +254,26 @@ export const exportModifiedPdf = async (
   return new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
 };
 
-export const cleanOcrFromPage = async (docInfo: PdfDocumentInfo, pageIndex: number): Promise<Blob> => {
+export const cleanOcrUnavailableMessage = 'Native Clean OCR is unavailable in this environment.';
+
+export const cleanOcrFromPage = async (docInfo: PdfDocumentInfo, pageNumber: number): Promise<Blob> => {
+  if (!window.antigravityPdf?.cleanOcrPage) {
+    throw new Error(cleanOcrUnavailableMessage);
+  }
+
   const arrayBuffer = await docInfo.file.arrayBuffer();
   const pdfBytes = new Uint8Array(arrayBuffer);
 
-  // Hand off to the Node.js backend to run Ghostscript
-  const newPdfBytes = await window.ipcRenderer.invoke<Uint8Array>('convert-text-to-paths', pdfBytes, pageIndex);
-  const outputBytes = new Uint8Array(newPdfBytes.byteLength);
-  outputBytes.set(newPdfBytes);
+  const result = await window.antigravityPdf.cleanOcrPage({ pdfBytes, pageNumber });
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
 
-  return new Blob([outputBytes.buffer], { type: 'application/pdf' });
+  const outputBytes = new Uint8Array(result.pdfBytes);
+  const outputBuffer = outputBytes.buffer.slice(
+    outputBytes.byteOffset,
+    outputBytes.byteOffset + outputBytes.byteLength,
+  );
+
+  return new Blob([outputBuffer], { type: 'application/pdf' });
 };

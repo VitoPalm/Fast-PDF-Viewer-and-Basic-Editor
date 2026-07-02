@@ -24,6 +24,7 @@ export interface ImportJob {
 
 export type ImportJobAction =
   | { type: 'started'; jobId: number; filesTotal: number }
+  | { type: 'analysis-only-started'; jobId: number; pagesTotal: number }
   | { type: 'loading-file'; jobId: number; fileName: string }
   | { type: 'pages-discovered'; jobId: number; fileName: string; pageCount: number }
   | { type: 'pages-instantiated'; jobId: number; count: number }
@@ -82,6 +83,15 @@ export const importJobReducer = (job: ImportJob, action: ImportJobAction): Impor
       ...createIdleImportJob(action.jobId),
       phase: 'reading',
       filesTotal: action.filesTotal,
+    };
+  }
+
+  if (action.type === 'analysis-only-started') {
+    return {
+      ...createIdleImportJob(action.jobId),
+      phase: 'analyzing',
+      pagesTotal: action.pagesTotal,
+      pagesInstantiated: action.pagesTotal,
     };
   }
 

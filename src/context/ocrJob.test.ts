@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type PdfPageInfo } from '../features/pdf-engine/utils';
+import { type PageAnalysis, type PdfPageInfo } from '../features/pdf-engine/utils';
 import {
   applyPageOcrResultForJob,
   applyPageOcrStatusForJob,
@@ -9,25 +9,61 @@ import {
   ocrJobReducer,
 } from './ocrJob';
 
+const scannedAnalysis: PageAnalysis = {
+  hasText: false,
+  hasOCR: false,
+  isScanned: true,
+  textHealth: 'imageOnly',
+  textHealthReasons: ['no-text'],
+  textItemCount: 0,
+  textSample: '',
+};
+
+const healthyAnalysis: PageAnalysis = {
+  hasText: true,
+  hasOCR: false,
+  isScanned: false,
+  textHealth: 'healthy',
+  textHealthReasons: [],
+  textItemCount: 12,
+  textSample: 'Readable page text',
+};
+
+const suspectAnalysis: PageAnalysis = {
+  hasText: true,
+  hasOCR: false,
+  isScanned: false,
+  textHealth: 'suspectEncoding',
+  textHealthReasons: ['replacement-characters'],
+  textItemCount: 24,
+  textSample: 'Broken text',
+};
+
 const pages: PdfPageInfo[] = [
   {
     id: 'scanned',
     docId: 'doc',
     originalPageIndex: 1,
-    analysis: { hasText: false, hasOCR: false, isScanned: true },
+    analysis: scannedAnalysis,
   },
   {
     id: 'text',
     docId: 'doc',
     originalPageIndex: 2,
-    analysis: { hasText: true, hasOCR: false, isScanned: false },
+    analysis: healthyAnalysis,
   },
   {
     id: 'running',
     docId: 'doc',
     originalPageIndex: 3,
-    analysis: { hasText: false, hasOCR: false, isScanned: true },
+    analysis: scannedAnalysis,
     ocrStatus: 'running',
+  },
+  {
+    id: 'suspect',
+    docId: 'doc',
+    originalPageIndex: 4,
+    analysis: suspectAnalysis,
   },
 ];
 
@@ -88,6 +124,10 @@ describe('ocr page helpers', () => {
     expect(getOcrCandidatePages(pages, ['scanned', 'text', 'running']).map(page => page.id)).toEqual(['scanned']);
   });
 
+  it('selects suspect text pages as OCR fallback candidates', () => {
+    expect(getOcrCandidatePages(pages, ['suspect']).map(page => page.id)).toEqual(['suspect']);
+  });
+
   it('includes text pages when explicitly requested', () => {
     expect(
       getOcrCandidatePages(pages, ['scanned', 'text'], { includeTextPages: true }).map(page => page.id),
@@ -138,7 +178,7 @@ describe('ocr page helpers', () => {
       ocrResult,
       ocrStatus: 'complete',
       ocrError: undefined,
-      analysis: { hasText: true, hasOCR: true, isScanned: false },
+      analysis: { hasText: true, hasOCR: true, isScanned: false, textHealth: 'hiddenOcr' },
       analysisStatus: 'complete',
       analysisError: undefined,
     });

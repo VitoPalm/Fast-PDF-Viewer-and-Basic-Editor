@@ -39,7 +39,8 @@ pages.
 - Select pages from thumbnails or from a range.
 - Remove, keep, reorder, and export pages.
 - Run OCR on a page, and partially on selected pages through the current UI.
-- Attempt Clean OCR through the Electron native path.
+- Clean OCR through the Electron native bridge when running in the packaged or
+  Electron app.
 
 ## Architectural Observations
 
@@ -47,14 +48,15 @@ pages.
   than keeping one immutable document model per source PDF.
 - Import now uses a context-level job model, publishing page placeholders before
   background analysis completes.
-- PDF.js rendering, text extraction, OCR, export, and native Clean OCR are not
-  yet separated by a stable platform boundary.
-- The renderer currently reaches too directly into Electron IPC for native
-  operations.
+- PDF.js rendering, text extraction, OCR, and export are still mostly renderer
+  concerns; native Clean OCR now sits behind a narrow typed bridge.
+- The renderer no longer exposes generic Electron IPC for native operations.
 - Core page operations need pure helpers so UI validation and data mutation do
   not drift apart.
 - OCR now uses a first-class job model shared by single-page, selected-page,
   and batch flows.
+- Page analysis now includes text-layer health so suspect native text can be
+  routed away from blind DOM text rendering before glyph repair exists.
 - Future glyph text repair should be separate from OCR overlay generation. It
   should repair text mapping metadata, preferably `/ToUnicode`, while preserving
   vector rendering.
@@ -72,9 +74,13 @@ pages.
 
 ## Immediate Engineering Priorities
 
-1. Block unsafe destructive operations from invalid ranges.
-2. Fix sidebar/minimap sync and virtualized reorder behavior.
-3. Narrow and type the Electron/native bridge.
-4. Add text-layer health diagnostics before glyph repair.
-5. Resolve release, licensing, and bundled asset strategy before public binary
+1. Treat 1.5.1 as the stabilized desktop baseline for native OCR and text
+   health.
+2. Preserve the 1.5.0 native bridge and text-health behavior through regression
+   checks.
+3. Decide whether fit-to-width/default zoom polish should land before glyph
+   repair.
+4. Resolve release, licensing, and bundled asset strategy before public binary
    distribution.
+5. Move into deterministic glyph text repair once the stabilized desktop
+   workflows remain green.

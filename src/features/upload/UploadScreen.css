@@ -12,10 +12,35 @@
   cursor: pointer;
 }
 
-.dropzone:hover, .dropzone.active {
+.dropzone:hover, .dropzone.active, .dropzone:focus-within {
   border-color: var(--accent-color);
   background: rgba(99, 102, 241, 0.05);
   box-shadow: 0 0 20px rgba(99, 102, 241, 0.1);
+}
+
+.dropzone[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.74;
+}
+
+.dropzone[data-disabled="true"]:hover,
+.dropzone[data-disabled="true"].active,
+.dropzone[data-disabled="true"]:focus-within {
+  border-color: var(--surface-border);
+  background: rgba(0, 0, 0, 0.2);
+  box-shadow: none;
+}
+
+.dropzone-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .dropzone-icon {

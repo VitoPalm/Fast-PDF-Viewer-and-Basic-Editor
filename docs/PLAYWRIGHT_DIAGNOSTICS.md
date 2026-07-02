@@ -69,8 +69,8 @@ recipes or paths in docs, and commit only minimal license-safe synthetic PDFs.
 - OCR completion can leave stale "needs OCR" sidebar badges.
 - Scan detection misses some low-text/scan-like PDFs.
 - Icon-only controls are missing accessible names.
-- Clean OCR fails gracefully in browser mode but reveals the native bridge is
-  not abstracted cleanly enough.
+- Clean OCR must stay behind a narrow native bridge and report unavailable
+  state precisely in browser-only renderer mode.
 
 ## Behaviors Confirmed Working
 
@@ -100,7 +100,7 @@ recipes or paths in docs, and commit only minimal license-safe synthetic PDFs.
   and partial completion.
 - Add Playwright desktop smoke tests for upload, large-doc jump, minimap click,
   range invalid gating, export, OCR state, and reorder.
-- Add package-mode or Electron-mode tests for Clean OCR native bridge behavior.
+- Keep package-mode or Electron-mode tests for Clean OCR native bridge behavior.
 
 ## Batch 1 Regression Suite
 
@@ -108,6 +108,13 @@ Added on 2026-07-02:
 
 - `playwright.config.ts`
 - `tests/playwright/batch1-stabilization.spec.ts`
+
+## Batch 4 Regression Suite
+
+Added on 2026-07-02:
+
+- `tests/playwright/batch4-native-text-health.spec.ts`
+- packaged preload smoke coverage for the typed Clean OCR bridge
 - `playwright.packaged.config.ts`
 - `tests/packaged/batch1-packaged.spec.ts`
 

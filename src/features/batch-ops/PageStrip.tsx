@@ -6,22 +6,35 @@ interface PageStripProps {
   pageNumbers: number[];
 }
 
+const MAX_STRIP_ITEMS = 18;
+
+const previewPageNumbers = (pageNumbers: number[]): number[] => {
+  if (pageNumbers.length <= MAX_STRIP_ITEMS) return pageNumbers;
+
+  const edgeCount = MAX_STRIP_ITEMS / 2;
+  return [
+    ...pageNumbers.slice(0, edgeCount),
+    ...pageNumbers.slice(-edgeCount),
+  ];
+};
+
 export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
   const { pages, documents, setActivePageId } = usePdf();
   const { requestThumbnail } = useRenderEngine();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stripPageNumbers = useMemo(() => previewPageNumbers(pageNumbers), [pageNumbers]);
 
   // Track which page numbers have their bitmap ready
   const [bitmaps, setBitmaps] = useState<Record<number, ImageBitmap>>({});
   
   // Deriving visiblePages from props
-  const visiblePages = useMemo(() => new Set(pageNumbers), [pageNumbers]);
+  const visiblePages = useMemo(() => new Set(stripPageNumbers), [stripPageNumbers]);
 
   // Handle bitmap cleanup asynchronously to avoid cascading render lint error
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       setBitmaps(prev => {
-        const numSet = new Set(pageNumbers);
+        const numSet = new Set(stripPageNumbers);
         const next: Record<number, ImageBitmap> = {};
         let changed = false;
         for (const [key, bmp] of Object.entries(prev)) {
@@ -35,13 +48,13 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [pageNumbers]);
+  }, [stripPageNumbers]);
 
   // Render thumbnails for visible pages
   useEffect(() => {
     let cancelled = false;
     const renderAll = async () => {
-      for (const pageNum of pageNumbers) {
+      for (const pageNum of stripPageNumbers) {
         if (cancelled) break;
         if (bitmaps[pageNum]) continue;
 
@@ -62,7 +75,7 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
     };
     renderAll();
     return () => { cancelled = true; };
-  }, [pageNumbers, pages, documents, requestThumbnail, bitmaps]);
+  }, [stripPageNumbers, pages, documents, requestThumbnail, bitmaps]);
 
   const handleThumbnailClick = useCallback((pageNum: number) => {
     const pageInfo = pages[pageNum - 1];
@@ -74,7 +87,7 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
   return (
     <div className="page-strip-container">
       <div className="page-strip" ref={scrollRef}>
-        {pageNumbers.map((pageNum, index) => (
+        {stripPageNumbers.map((pageNum, index) => (
           <StripThumbnail
             key={`${pageNum}-${index}`}
             pageNum={pageNum}
@@ -85,6 +98,11 @@ export const PageStrip: React.FC<PageStripProps> = ({ pageNumbers }) => {
           />
         ))}
       </div>
+      {pageNumbers.length > stripPageNumbers.length && (
+        <div className="page-strip-summary">
+          Showing {stripPageNumbers.length} of {pageNumbers.length} pages
+        </div>
+      )}
     </div>
   );
 };
@@ -110,11 +128,13 @@ const StripThumbnail: React.FC<{
   const animDelay = Math.min(index * 20, 300);
 
   return (
-    <div
+    <button
+      type="button"
       className={`page-strip-item ${isVisible ? 'enter' : 'exit'}`}
       style={{ animationDelay: `${animDelay}ms` }}
       onClick={onClick}
-      title={`Page ${pageNum}`}
+      title={`Go to page ${pageNum}`}
+      aria-label={`Go to page ${pageNum}`}
     >
       <div className="page-strip-item-inner">
         {bitmap ? (
@@ -126,7 +146,7 @@ const StripThumbnail: React.FC<{
         )}
       </div>
       <span className="page-strip-label">{pageNum}</span>
-    </div>
+    </button>
   );
 };
 

@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable, type DragStart, type DropResult, type DraggableProvided } from '@hello-pangea/dnd';
-import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare, Sparkles } from 'lucide-react';
+import { Trash2, GripVertical, Check, RotateCcw, XSquare, CheckSquare, Sparkles, AlertTriangle } from 'lucide-react';
 import { usePdf } from '../../shared/hooks/usePdf';
 import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 import { PageRangeBar } from '../batch-ops/PageRangeBar';
 import { DocumentMinimap } from './DocumentMinimap';
-import { type PdfPageInfo } from '../pdf-engine/utils';
+import { isAnalysisOcrCandidate, type PdfPageInfo } from '../pdf-engine/utils';
+import { isSuspectTextHealth } from '../pdf-engine/textLayerHealth';
 import './Sidebar.css';
 
 const ITEM_HEIGHT = 88;
@@ -27,7 +28,7 @@ export const Sidebar: React.FC = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [containerHeight, setContainerHeight] = useState(600);
   const [scrollOffset, setScrollOffset] = useState(0);
-  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  const [lastClickedPageId, setLastClickedPageId] = useState<string | null>(null);
   const [draggingPageId, setDraggingPageId] = useState<string | null>(null);
 
   const startResize = useCallback((e: React.MouseEvent) => {
@@ -127,14 +128,20 @@ export const Sidebar: React.FC = () => {
 
     if (e.ctrlKey || e.metaKey) {
       togglePageSelection(page.id);
-      setLastClickedIndex(index);
-    } else if (e.shiftKey && lastClickedIndex !== null) {
-      selectPageRange(lastClickedIndex, index);
+      setLastClickedPageId(page.id);
+    } else if (e.shiftKey && lastClickedPageId !== null) {
+      const anchorIndex = pages.findIndex(candidate => candidate.id === lastClickedPageId);
+      if (anchorIndex >= 0) {
+        selectPageRange(anchorIndex, index);
+      } else {
+        setActivePageId(page.id);
+        setLastClickedPageId(page.id);
+      }
     } else {
       setActivePageId(page.id);
-      setLastClickedIndex(index);
+      setLastClickedPageId(page.id);
     }
-  }, [pages, togglePageSelection, selectPageRange, setActivePageId, lastClickedIndex]);
+  }, [lastClickedPageId, pages, togglePageSelection, selectPageRange, setActivePageId]);
 
   const { rangeInput, setRangeInput } = usePdf();
 
@@ -224,6 +231,8 @@ export const Sidebar: React.FC = () => {
                     isDragging={snapshot.isDragging}
                     docName={documents[page?.docId]?.name ?? ''}
                     onClick={() => {}}
+                    onOpen={() => {}}
+                    onToggleSelect={() => {}}
                     onDoubleClick={() => {}}
                     onRemove={() => {}}
                   />
@@ -253,6 +262,14 @@ export const Sidebar: React.FC = () => {
                             isDragging={snapshot.isDragging}
                             docName={documents[page.docId]?.name ?? ''}
                             onClick={(e) => handleItemClick(index, e)}
+                            onOpen={() => {
+                              setActivePageId(page.id);
+                              setLastClickedPageId(page.id);
+                            }}
+                            onToggleSelect={() => {
+                              togglePageSelection(page.id);
+                              setLastClickedPageId(page.id);
+                            }}
                             onDoubleClick={() => handleItemDoubleClick(index)}
                             onRemove={() => removePageWithUndo(page.id)}
                             style={{
@@ -284,29 +301,30 @@ export const Sidebar: React.FC = () => {
           <div className="batch-toolbar">
             <span className="batch-toolbar-count">{selectedPageIds.size} selected</span>
             <div className="batch-toolbar-actions">
-              <button className="batch-btn" onClick={handleRemoveSelected} title="Remove selected">
+              <button className="batch-btn" onClick={handleRemoveSelected} title="Remove selected" aria-label="Remove selected pages">
                 <Trash2 size={14} />
               </button>
-              <button className="batch-btn" onClick={selectAll} title="Select all">
+              <button className="batch-btn" onClick={selectAll} title="Select all" aria-label="Select all pages">
                 <CheckSquare size={14} />
               </button>
-              <button className="batch-btn" onClick={invertSelection} title="Invert selection">
+              <button className="batch-btn" onClick={invertSelection} title="Invert selection" aria-label="Invert page selection">
                 <RotateCcw size={14} />
               </button>
-              <button className="batch-btn" onClick={clearSelection} title="Clear selection">
+              <button className="batch-btn" onClick={clearSelection} title="Clear selection" aria-label="Clear page selection">
                 <XSquare size={14} />
               </button>
               <button className="batch-btn" style={{ color: 'var(--accent-color)' }} onClick={async () => {
-                const selectedScanned = pages.filter(p => selectedPageIds.has(p.id) && p.analysis?.isScanned);
-                if (selectedScanned.length === 0) {
-                  alert("No scanned pages found in selection.");
+                const selectedOcrCandidates = pages.filter(p => selectedPageIds.has(p.id) && isAnalysisOcrCandidate(p.analysis));
+                if (selectedOcrCandidates.length === 0) {
+                  alert("No OCR candidates found in selection.");
                   return;
                 }
-                if (!confirm(`Run OCR on ${selectedScanned.length} pages? This might take a while.`)) return;
+                const pageWord = selectedOcrCandidates.length === 1 ? 'page' : 'pages';
+                if (!confirm(`Run OCR on ${selectedOcrCandidates.length} ${pageWord}? This might take a while.`)) return;
 
-                const ids = selectedScanned.map(p => p.id);
+                const ids = selectedOcrCandidates.map(p => p.id);
                 void startOcr(ids, { mode: 'selected' });
-              }} title="OCR Selected Pages">
+              }} title="OCR Selected Pages" aria-label="OCR selected pages">
                 <Sparkles size={14} />
               </button>
             </div>
@@ -327,16 +345,48 @@ interface ThumbnailItemContentProps {
   isDragging: boolean;
   docName: string;
   onClick: (e: React.MouseEvent) => void;
+  onOpen: () => void;
+  onToggleSelect: () => void;
   onDoubleClick: () => void;
   onRemove: () => void;
   style?: React.CSSProperties;
 }
 
-const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({ 
-  provided, page, index, isActive, isSelected, isDragging, docName, onClick, onDoubleClick, onRemove, style 
+const getThumbnailStatusText = (page: PdfPageInfo) => {
+  const status: string[] = [];
+
+  if (page.analysisStatus === 'pending') status.push('analysis pending');
+  if (page.analysisStatus === 'running') status.push('analysis running');
+  if (page.analysisStatus === 'failed') status.push(`analysis failed${page.analysisError ? `: ${page.analysisError}` : ''}`);
+  if (page.analysis && isSuspectTextHealth(page.analysis.textHealth)) status.push('text layer needs review');
+  if (page.ocrStatus === 'queued') status.push('OCR queued');
+  if (page.ocrStatus === 'running') status.push('OCR running');
+  if (page.ocrStatus === 'failed') status.push(`OCR failed${page.ocrError ? `: ${page.ocrError}` : ''}`);
+  if (page.ocrStatus === 'skipped') status.push('OCR skipped');
+  if (page.ocrStatus === 'complete' || page.ocrResult) status.push('OCR text added');
+  if (!page.ocrResult && (!page.ocrStatus || page.ocrStatus === 'idle') && isAnalysisOcrCandidate(page.analysis)) {
+    status.push('OCR candidate');
+  }
+
+  return status;
+};
+
+const getOcrCandidateBadgeTitle = (page: PdfPageInfo) => (
+  page.analysis?.isScanned ? 'Scanned page (needs OCR)' : 'OCR candidate'
+);
+
+const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
+  provided, page, index, isActive, isSelected, isDragging, docName, onClick, onOpen, onToggleSelect, onDoubleClick, onRemove, style
 }) => {
   // Destructuring outside the JSX to help some linters, though it's technically still "render time"
   const { innerRef, draggableProps, dragHandleProps } = provided;
+  const statusText = getThumbnailStatusText(page);
+  const thumbnailLabel = [
+    `Open page ${index + 1} from ${docName}`,
+    isActive ? 'active page' : null,
+    isSelected ? 'selected' : null,
+    ...statusText,
+  ].filter(Boolean).join(', ');
 
   return (
     <div
@@ -351,19 +401,24 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
       onDoubleClick={onDoubleClick}
     >
       <div className="thumbnail-item-inner">
-        <div {...dragHandleProps} className="drag-handle">
+        <div {...dragHandleProps} className="drag-handle" aria-label={`Drag page ${index + 1}`}>
           <GripVertical size={14} />
         </div>
         <div style={{ position: 'relative' }}>
           <LazyThumbnail page={page} />
           {(page.analysisStatus === 'pending' || page.analysisStatus === 'running') && (
-            <div className="thumbnail-analysis-badge" title="Analyzing page">
+            <div className="thumbnail-analysis-badge" title="Analyzing page" aria-label="Analyzing page">
               <Sparkles size={10} />
             </div>
           )}
           {page.analysisStatus === 'failed' && (
             <div className="thumbnail-analysis-badge failed" title={page.analysisError ?? 'Page analysis failed'}>
               !
+            </div>
+          )}
+          {page.analysis && isSuspectTextHealth(page.analysis.textHealth) && (
+            <div className="thumbnail-text-health-badge" title="Text layer suspect" aria-label="Text layer suspect">
+              <AlertTriangle size={10} />
             </div>
           )}
           {(page.ocrStatus === 'queued' || page.ocrStatus === 'running') && (
@@ -381,18 +436,45 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
               -
             </div>
           )}
-          {page.analysis?.isScanned && page.ocrStatus !== 'running' && page.ocrStatus !== 'queued' && page.ocrStatus !== 'complete' && (
-            <div className="thumbnail-ocr-badge" title="Scanned page (needs OCR)">
+          {isAnalysisOcrCandidate(page.analysis) && (!page.ocrStatus || page.ocrStatus === 'idle') && !page.ocrResult && (
+            <div className="thumbnail-ocr-badge" title={getOcrCandidateBadgeTitle(page)} aria-label={getOcrCandidateBadgeTitle(page)}>
               <Sparkles size={10} />
             </div>
           )}
         </div>
         <div className="thumbnail-info">
-          <div className="thumbnail-page-num">Page {index + 1}</div>
-          <div className="thumbnail-doc-name" title={docName}>{docName}</div>
+          <button
+            type="button"
+            className="thumbnail-open-button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                onClick(e);
+              } else {
+                onOpen();
+              }
+            }}
+            aria-label={thumbnailLabel}
+            aria-current={isActive ? 'page' : undefined}
+          >
+            <span className="thumbnail-page-num">Page {index + 1}</span>
+            <span className="thumbnail-doc-name" title={docName}>{docName}</span>
+          </button>
         </div>
-        {isSelected && <div className="thumbnail-check"><Check size={12} /></div>}
-        <button className="thumbnail-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }} title="Remove page">
+        <button
+          className={`thumbnail-select-toggle ${isSelected ? 'selected' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect();
+          }}
+          type="button"
+          aria-label={`${isSelected ? 'Deselect' : 'Select'} page ${index + 1}`}
+          aria-pressed={isSelected}
+          title={isSelected ? 'Deselect page' : 'Select page'}
+        >
+          {isSelected && <Check size={12} />}
+        </button>
+        <button className="thumbnail-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }} title="Remove page" aria-label={`Remove page ${index + 1}`}>
           <Trash2 size={14} />
         </button>
       </div>

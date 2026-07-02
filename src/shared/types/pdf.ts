@@ -18,6 +18,11 @@ export interface PendingPageUndo {
   expiresAt: number;
 }
 
+export interface PageMutationConfirmOptions {
+  title?: string;
+  nextRangeInput?: string;
+}
+
 export interface PdfContextType {
   documents: Record<string, PdfDocumentInfo>;
   pages: PdfPageInfo[];
@@ -40,8 +45,8 @@ export interface PdfContextType {
   extractPages: (ids: string[]) => void;
   clearAll: () => void;
   removePageWithUndo: (id: string) => void;
-  removePagesWithUndo: (ids: string[]) => void;
-  keepOnlyPagesWithUndo: (ids: string[]) => void;
+  removePagesWithUndo: (ids: string[], options?: PageMutationConfirmOptions) => void;
+  keepOnlyPagesWithUndo: (ids: string[], options?: PageMutationConfirmOptions) => void;
   clearAllWithUndo: () => void;
   reorderPage: (sourceIndex: number, destinationIndex: number) => void;
   reorderSelectedPages: (draggedId: string, destinationIndex: number) => void;

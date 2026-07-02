@@ -68,5 +68,6 @@ export async function loadPdf(page: Page, filePath: string, expectedPages: numbe
   await expect(page.locator('.page-count-badge')).toHaveText(String(expectedPages), { timeout: 120_000 });
   await expect(page.locator('.page-indicator-label')).toContainText(`1 / ${expectedPages}`);
   await page.locator('.pdf-page-container.ready').waitFor({ timeout: 60_000 });
+  await expect(page.locator('[data-testid="workspace-import-progress"]')).toHaveCount(0, { timeout: 60_000 });
   await page.screenshot({ path: testInfo.outputPath(`packaged-loaded-${expectedPages}-pages.png`), fullPage: true });
 }

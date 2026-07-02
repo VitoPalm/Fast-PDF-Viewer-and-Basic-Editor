@@ -1,11 +1,14 @@
 {
   "name": "fast-pdf-editor",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.5.1",
   "description": "A high-performance, premium PDF viewer and editor.",
   "author": "Vito Palmieri <vito@example.com>",
   "type": "module",
   "main": "dist-electron/main.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && electron-builder --publish never",
@@ -18,7 +21,7 @@
     "package:dir": "npm run version:sync:git && tsc -b && vite build && electron-builder --dir --publish never",
     "test:packaged": "npm run package:dir && playwright test --config=playwright.packaged.config.ts",
     "preview": "vite preview",
-    "electron:build": "npm run version:sync:git && vite build && electron-builder --publish always",
+    "electron:build": "npm run version:sync:git && tsc -b && vite build && electron-builder --publish always",
     "electron:build:win": "npm run version:sync:git && vite build && electron-builder --win",
     "electron:build:mac": "npm run version:sync:git && vite build && electron-builder --mac",
     "electron:build:linux": "npm run version:sync:git && vite build && electron-builder --linux"
@@ -73,6 +76,12 @@
     "files": [
       "dist",
       "dist-electron"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/@okathira/ghostpdl-wasm/dist/gs.wasm",
+        "to": "gs.wasm"
+      }
     ],
     "mac": {
       "category": "public.app-category.productivity",
