@@ -197,7 +197,7 @@
   box-shadow: var(--shadow-lg);
   z-index: 100;
   animation: fadeIn 0.3s ease;
-  max-width: min(calc(100% - 32px), 760px);
+  max-width: min(calc(100% - 32px), 420px);
   white-space: nowrap;
 }
 
@@ -264,6 +264,33 @@
   outline: none;
   box-shadow: 0 0 8px rgba(99, 102, 241, 0.2);
   font-variant-numeric: tabular-nums;
+}
+
+.workspace-activity-strip {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  z-index: 105;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: min(360px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.workspace-activity-strip .ocr-pill,
+.workspace-activity-strip .glyph-pill,
+.workspace-activity-strip .repair-pill {
+  width: 100%;
+  margin-left: 0;
+  padding: 8px 10px;
+  border-left: none;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: rgba(20, 22, 28, 0.9);
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
 }
 
 /* Text Layer selection */
@@ -511,6 +538,15 @@
     border-top: 1px solid var(--surface-border);
     justify-content: center;
   }
+
+  .repair-pill {
+    width: 100%;
+    margin-left: 0;
+    padding: 4px 8px 0;
+    border-left: none;
+    border-top: 1px solid var(--surface-border);
+    justify-content: center;
+  }
 }
 
 .ocr-pill-retry {
@@ -605,6 +641,83 @@
 }
 
 .glyph-pill-cancel:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.repair-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  padding: 0 12px;
+  border-left: 1px solid var(--surface-border);
+  animation: fadeIn 0.3s ease;
+  min-width: 0;
+}
+
+.repair-pill-icon {
+  color: var(--info-color);
+  flex-shrink: 0;
+}
+
+.repair-pill-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.repair-pill-status {
+  font-size: 0.68rem;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
+}
+
+.repair-pill-queue {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.repair-pill-bar-container {
+  width: 48px;
+  height: 3px;
+  background: var(--surface-highlight);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.repair-pill-bar {
+  height: 100%;
+  background: var(--info-color);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 6px var(--info-soft);
+}
+
+.repair-pill-cancel {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.repair-pill-cancel:hover {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
 }

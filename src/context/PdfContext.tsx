@@ -8,7 +8,7 @@ import {
   diagnoseGlyphText,
   repairGlyphText,
 } from '../features/pdf-engine/utils';
-import { type PageMutationConfirmOptions, type TextAnnotation } from '../shared/types/pdf';
+import { type ConfirmActionOptions, type PageMutationConfirmOptions, type TextAnnotation } from '../shared/types/pdf';
 import { OCRService } from '../features/pdf-engine/ocrService';
 import { detectLanguage } from '../features/pdf-engine/languageDetector';
 import {
@@ -37,6 +37,11 @@ import {
   isGlyphJobBusy,
 } from './glyphRepairJob';
 import {
+  createIdleGlyphTextRepairJob,
+  glyphTextRepairJobReducer,
+  isGlyphTextRepairJobBusy,
+} from './glyphTextRepairJob';
+import {
   getNextActivePageId,
   keepOnlyPagesById,
   removePagesById,
@@ -61,6 +66,7 @@ interface PendingUndoState {
   description: string;
   expiresAt: number;
   snapshot: PageStateSnapshot;
+  exactRestorePageIds?: Set<string>;
 }
 
 interface ConfirmRequest {
@@ -69,6 +75,7 @@ interface ConfirmRequest {
   confirmLabel: string;
   danger?: boolean;
   onConfirm: () => void;
+  onCancel?: () => void;
 }
 
 interface PageMutationResult {
@@ -77,6 +84,11 @@ interface PageMutationResult {
   selectedPageIds: Set<string>;
   rangeInput: string;
   documents?: Record<string, PdfDocumentInfo>;
+}
+
+interface GlyphRepairPageOutcome {
+  status: 'repaired' | 'skipped' | 'failed' | 'cancelled';
+  error?: string;
 }
 
 export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -89,6 +101,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [importJob, dispatchImportJob] = useReducer(importJobReducer, createIdleImportJob());
   const [ocrJob, dispatchOcrJob] = useReducer(ocrJobReducer, createIdleOcrJob());
   const [glyphJob, dispatchGlyphJob] = useReducer(glyphJobReducer, createIdleGlyphJob());
+  const [glyphTextRepairJob, dispatchGlyphTextRepairJob] = useReducer(
+    glyphTextRepairJobReducer,
+    createIdleGlyphTextRepairJob(),
+  );
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [pendingUndoState, setPendingUndoState] = useState<PendingUndoState | null>(null);
   const undoTimerRef = useRef<number | null>(null);
@@ -98,6 +114,9 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const selectedPageIdsRef = useRef(selectedPageIds);
   const rangeInputRef = useRef(rangeInput);
   const importJobRef = useRef(importJob);
+  const ocrJobRef = useRef(ocrJob);
+  const glyphJobRef = useRef(glyphJob);
+  const glyphTextRepairJobRef = useRef(glyphTextRepairJob);
   const restartAnalysisRef = useRef<(
     restoredPages: PdfPageInfo[],
     restoredDocuments: Record<string, PdfDocumentInfo>,
@@ -106,15 +125,22 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const currentImportJobIdRef = useRef(0);
   const currentOcrJobIdRef = useRef(0);
   const currentGlyphJobIdRef = useRef(0);
+  const currentGlyphTextRepairJobIdRef = useRef(0);
   const ocrCancelRef = useRef(false);
   const glyphCancelRef = useRef(false);
+  const glyphTextRepairCancelRef = useRef(false);
+  const glyphTextRepairStopAfterCurrentRef = useRef(false);
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
   const undoButtonRef = useRef<HTMLButtonElement | null>(null);
   const pausedUndoRemainingMsRef = useRef<number | null>(null);
   const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
 
-  const isGlyphRepairRunning = pages.some(page => page.glyphRepairStatus === 'running');
-  const isLoading = isImportJobBusy(importJob) || isOcrJobBusy(ocrJob) || isGlyphJobBusy(glyphJob) || isGlyphRepairRunning;
+  const isLoading = (
+    isImportJobBusy(importJob) ||
+    isOcrJobBusy(ocrJob) ||
+    isGlyphJobBusy(glyphJob) ||
+    isGlyphTextRepairJobBusy(glyphTextRepairJob)
+  );
 
   useEffect(() => {
     // Pre-initialize OCR engine in the background
@@ -152,6 +178,18 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [importJob]);
 
   useEffect(() => {
+    ocrJobRef.current = ocrJob;
+  }, [ocrJob]);
+
+  useEffect(() => {
+    glyphJobRef.current = glyphJob;
+  }, [glyphJob]);
+
+  useEffect(() => {
+    glyphTextRepairJobRef.current = glyphTextRepairJob;
+  }, [glyphTextRepairJob]);
+
+  useEffect(() => {
     if (confirmRequest) {
       window.setTimeout(() => cancelButtonRef.current?.focus(), 0);
     }
@@ -167,6 +205,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const isGlyphJobCurrent = useCallback((jobId: number) => (
     currentGlyphJobIdRef.current === jobId
+  ), []);
+
+  const isGlyphTextRepairJobCurrent = useCallback((jobId: number) => (
+    currentGlyphTextRepairJobIdRef.current === jobId
   ), []);
 
   const getErrorMessage = useCallback((err: unknown): string => (
@@ -288,6 +330,56 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     currentGlyphJobIdRef.current += 1;
   }, [updateGlyphStatusForJob]);
 
+  const updateGlyphRepairStatusForJob = useCallback((
+    jobId: number,
+    pageId: string,
+    status: PdfPageInfo['glyphRepairStatus'],
+    error?: string,
+  ) => {
+    if (!isGlyphTextRepairJobCurrent(jobId)) return;
+    setPages(prev => prev.map(page => page.id === pageId ? {
+      ...page,
+      glyphRepairStatus: status,
+      glyphRepairError: error,
+    } : page));
+  }, [isGlyphTextRepairJobCurrent]);
+
+  const cancelGlyphTextRepairImmediately = useCallback(() => {
+    const cancelledJobId = currentGlyphTextRepairJobIdRef.current;
+    if (cancelledJobId <= 0) return;
+
+    glyphTextRepairCancelRef.current = true;
+    glyphTextRepairStopAfterCurrentRef.current = false;
+    const skippedIds = pagesRef.current
+      .filter(page => page.glyphRepairStatus === 'queued' || page.glyphRepairStatus === 'running')
+      .map(page => page.id);
+
+    skippedIds.forEach(pageId => {
+      updateGlyphRepairStatusForJob(cancelledJobId, pageId, 'skipped', 'Text repair was cancelled.');
+      dispatchGlyphTextRepairJob({ type: 'page-skipped', jobId: cancelledJobId, pageId });
+    });
+
+    dispatchGlyphTextRepairJob({ type: 'cancelled', jobId: cancelledJobId });
+    currentGlyphTextRepairJobIdRef.current += 1;
+  }, [updateGlyphRepairStatusForJob]);
+
+  const cancelGlyphTextRepair = useCallback(() => {
+    const cancelledJobId = currentGlyphTextRepairJobIdRef.current;
+    if (cancelledJobId <= 0 || !isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current)) return;
+
+    glyphTextRepairStopAfterCurrentRef.current = true;
+    const queuedIds = pagesRef.current
+      .filter(page => page.glyphRepairStatus === 'queued')
+      .map(page => page.id);
+
+    queuedIds.forEach(pageId => {
+      updateGlyphRepairStatusForJob(cancelledJobId, pageId, 'skipped', 'Text repair was stopped before this page.');
+      dispatchGlyphTextRepairJob({ type: 'page-skipped', jobId: cancelledJobId, pageId });
+    });
+
+    dispatchGlyphTextRepairJob({ type: 'cancel-requested', jobId: cancelledJobId });
+  }, [updateGlyphRepairStatusForJob]);
+
   const applyGlyphReportForJob = useCallback((
     jobId: number,
     pageId: string,
@@ -304,6 +396,19 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [isGlyphJobCurrent]);
 
   const startGlyphDiagnostics = useCallback(async (pageIds: string[]) => {
+    if (isImportJobBusy(importJobRef.current)) {
+      alert('Wait for the current import to finish before checking text.');
+      return;
+    }
+    if (isOcrJobBusy(ocrJobRef.current)) {
+      alert('Wait for the current OCR job to finish before checking text.');
+      return;
+    }
+    if (isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current)) {
+      alert('Wait for the current text repair to finish before checking text.');
+      return;
+    }
+
     const candidates = getGlyphDiagnosticsCandidatePages(pagesRef.current, pageIds);
     if (candidates.length === 0) return;
 
@@ -363,6 +468,19 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [applyGlyphReportForJob, cancelGlyphDiagnostics, getErrorMessage, glyphJob, isGlyphJobCurrent, updateGlyphStatusForJob]);
 
   const startOcr = useCallback(async (pageIds: string[], options: OcrJobOptions) => {
+    if (isImportJobBusy(importJobRef.current)) {
+      alert('Wait for the current import to finish before starting OCR.');
+      return;
+    }
+    if (isGlyphJobBusy(glyphJobRef.current)) {
+      alert('Wait for the current text check to finish before starting OCR.');
+      return;
+    }
+    if (isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current)) {
+      alert('Wait for the current text repair to finish before starting OCR.');
+      return;
+    }
+
     const candidates = getOcrCandidatePages(pagesRef.current, pageIds, options);
     if (candidates.length === 0) return;
 
@@ -523,7 +641,6 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setPendingUndoState(null);
       undoTimerRef.current = null;
     }, timeoutMs);
-    window.setTimeout(() => undoButtonRef.current?.focus(), 0);
   }, [clearUndoTimer]);
 
   const pauseUndoTimer = useCallback(() => {
@@ -546,10 +663,43 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [pendingUndoState, startUndoTimer]);
 
   const closeConfirmDialog = useCallback(() => {
-    setConfirmRequest(null);
+    setConfirmRequest(prev => {
+      prev?.onCancel?.();
+      return null;
+    });
     resumePausedUndoTimer();
     window.setTimeout(() => confirmReturnFocusRef.current?.focus(), 0);
   }, [resumePausedUndoTimer]);
+
+  const confirmAction = useCallback((options: ConfirmActionOptions): Promise<boolean> => (
+    new Promise(resolve => {
+      let settled = false;
+      const settle = (confirmed: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(confirmed);
+      };
+
+      confirmReturnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+      pauseUndoTimer();
+
+      setConfirmRequest({
+        title: options.title,
+        message: options.message,
+        confirmLabel: options.confirmLabel,
+        danger: options.danger,
+        onCancel: () => settle(false),
+        onConfirm: () => {
+          settle(true);
+          setConfirmRequest(null);
+          resumePausedUndoTimer();
+          window.setTimeout(() => confirmReturnFocusRef.current?.focus(), 0);
+        },
+      });
+    })
+  ), [pauseUndoTimer, resumePausedUndoTimer]);
 
   useEffect(() => {
     if (!confirmRequest) return;
@@ -613,20 +763,27 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ? 'skipped'
         : page.glyphDiagnosticsStatus,
       glyphDiagnosticsError: page.glyphDiagnosticsStatus === 'queued' || page.glyphDiagnosticsStatus === 'running'
-        ? 'Glyph diagnostics were cancelled before undo restored this page.'
+        ? 'Text checks were cancelled before undo restored this page.'
         : page.glyphDiagnosticsError,
-      glyphRepairStatus: page.glyphRepairStatus === 'running' ? 'skipped' : page.glyphRepairStatus,
-      glyphRepairError: page.glyphRepairStatus === 'running'
-        ? 'Glyph repair finished after undo restored this page.'
+      glyphRepairStatus: page.glyphRepairStatus === 'queued' || page.glyphRepairStatus === 'running' ? 'skipped' : page.glyphRepairStatus,
+      glyphRepairError: page.glyphRepairStatus === 'queued' || page.glyphRepairStatus === 'running'
+        ? 'Text repair finished after undo restored this page.'
         : page.glyphRepairError,
     }))
   ), []);
 
-  const buildRebasedUndoSnapshot = useCallback((snapshot: PageStateSnapshot): PageStateSnapshot => {
+  const buildRebasedUndoSnapshot = useCallback((
+    snapshot: PageStateSnapshot,
+    exactRestorePageIds = new Set<string>(),
+  ): PageStateSnapshot => {
     const currentPages = pagesRef.current;
     const currentPageById = new Map(currentPages.map(page => [page.id, page]));
     const snapshotPageIds = new Set(snapshot.pages.map(page => page.id));
-    const restoredSnapshotPages = snapshot.pages.map(page => mergeRuntimePageState(page, currentPageById.get(page.id)));
+    const restoredSnapshotPages = snapshot.pages.map(page => (
+      exactRestorePageIds.has(page.id)
+        ? page
+        : mergeRuntimePageState(page, currentPageById.get(page.id))
+    ));
     const currentOnlyPages = currentPages.filter(page => !snapshotPageIds.has(page.id));
     const restoredPages = normalizeRestoredPageState([...restoredSnapshotPages, ...currentOnlyPages]);
     const validPageIds = new Set(restoredPages.map(page => page.id));
@@ -645,11 +802,30 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [mergeRuntimePageState, normalizeRestoredPageState]);
 
   const requestConfirmedPageMutation = useCallback((
-    request: Omit<ConfirmRequest, 'onConfirm'> & { undoDescription: string; beforeApply?: () => void; allowDuringImport?: boolean },
+    request: Omit<ConfirmRequest, 'onConfirm'> & {
+      undoDescription: string;
+      beforeApply?: () => void;
+      allowDuringImport?: boolean;
+      allowDuringOcr?: boolean;
+      allowDuringGlyphDiagnostics?: boolean;
+      allowDuringRepair?: boolean;
+    },
     buildResult: (snapshot: PageStateSnapshot) => PageMutationResult | null,
   ) => {
     if (isImportJobBusy(importJobRef.current) && !request.allowDuringImport) {
       alert('Wait for the current import to finish before changing pages.');
+      return;
+    }
+    if (isOcrJobBusy(ocrJobRef.current) && !request.allowDuringOcr) {
+      alert('Wait for the current OCR job to finish before changing pages.');
+      return;
+    }
+    if (isGlyphJobBusy(glyphJobRef.current) && !request.allowDuringGlyphDiagnostics) {
+      alert('Wait for the current text check to finish before changing pages.');
+      return;
+    }
+    if (isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current) && !request.allowDuringRepair) {
+      alert('Wait for the current text repair to finish before changing pages.');
       return;
     }
 
@@ -689,6 +865,18 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       alert('Wait for the current import to finish before changing pages.');
       return;
     }
+    if (isOcrJobBusy(ocrJobRef.current)) {
+      alert('Wait for the current OCR job to finish before changing pages.');
+      return;
+    }
+    if (isGlyphJobBusy(glyphJobRef.current)) {
+      alert('Wait for the current text check to finish before changing pages.');
+      return;
+    }
+    if (isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current)) {
+      alert('Wait for the current text repair to finish before changing pages.');
+      return;
+    }
 
     const snapshot = captureSnapshot();
     const result = buildResult(snapshot);
@@ -708,7 +896,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     pausedUndoRemainingMsRef.current = null;
     setConfirmRequest(null);
 
-    const rebasedSnapshot = buildRebasedUndoSnapshot(pendingUndoState.snapshot);
+    const rebasedSnapshot = buildRebasedUndoSnapshot(
+      pendingUndoState.snapshot,
+      pendingUndoState.exactRestorePageIds,
+    );
     setDocuments(rebasedSnapshot.documents);
     setPages(rebasedSnapshot.pages);
     setActivePageId(rebasedSnapshot.activePageId);
@@ -824,6 +1015,18 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     if (isImportJobBusy(importJobRef.current)) return;
+    if (isOcrJobBusy(ocrJobRef.current)) {
+      alert('Wait for the current OCR job to finish before adding PDFs.');
+      return;
+    }
+    if (isGlyphJobBusy(glyphJobRef.current)) {
+      alert('Wait for the current text check to finish before adding PDFs.');
+      return;
+    }
+    if (isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current)) {
+      alert('Wait for the current text repair to finish before adding PDFs.');
+      return;
+    }
 
     const jobId = currentImportJobIdRef.current + 1;
     currentImportJobIdRef.current = jobId;
@@ -879,37 +1082,60 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [analyzeImportedPages, getErrorMessage, isImportJobCurrent]);
 
-  const repairGlyphTextPage = useCallback(async (pageId: string) => {
+  const getPageOcrText = useCallback((pageInfo: PdfPageInfo): string | undefined => {
+    const text = pageInfo.ocrResult?.items
+      .map(item => item.str)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text && text.length > 0 ? text : undefined;
+  }, []);
+
+  const shouldReplaceExistingToUnicode = useCallback((pageInfo: PdfPageInfo): boolean => (
+    Boolean(getPageOcrText(pageInfo)) ||
+    pageInfo.glyphDiagnostics?.pages.some(page => (
+      page.fonts.some(font => font.repairPlan === 'existing-to-unicode-needs-review')
+    )) === true
+  ), [getPageOcrText]);
+
+  const repairGlyphTextPageForJob = useCallback(async (
+    pageId: string,
+    jobId: number,
+  ): Promise<GlyphRepairPageOutcome> => {
+    if (!isGlyphTextRepairJobCurrent(jobId) || glyphTextRepairCancelRef.current) {
+      return { status: 'cancelled' };
+    }
+
     const pageInfo = pagesRef.current.find(page => page.id === pageId);
-    if (!pageInfo || pageInfo.glyphRepairStatus === 'running') return;
+    if (!pageInfo) return { status: 'cancelled' };
 
     const docInfo = documentsRef.current[pageInfo.docId];
     if (!docInfo) {
-      setPages(prev => prev.map(page => page.id === pageId ? {
-        ...page,
-        glyphRepairStatus: 'failed',
-        glyphRepairError: `Missing PDF document for page ${pageInfo.originalPageIndex}`,
-      } : page));
-      return;
+      const error = `Missing PDF document for page ${pageInfo.originalPageIndex}`;
+      updateGlyphRepairStatusForJob(jobId, pageId, 'failed', error);
+      return { status: 'failed', error };
     }
 
     const originalDocId = pageInfo.docId;
     const originalPageIndex = pageInfo.originalPageIndex;
-    const isOriginalPageStillCurrent = () => pagesRef.current.some(page => (
+    const isOriginalPageStillCurrent = () => (
+      isGlyphTextRepairJobCurrent(jobId) &&
+      !glyphTextRepairCancelRef.current &&
+      pagesRef.current.some(page => (
       page.id === pageId &&
       page.docId === originalDocId &&
       page.originalPageIndex === originalPageIndex
-    ));
+      ))
+    );
 
-    setPages(prev => prev.map(page => page.id === pageId ? {
-      ...page,
-      glyphRepairStatus: 'running',
-      glyphRepairError: undefined,
-    } : page));
+    updateGlyphRepairStatusForJob(jobId, pageId, 'running');
 
     try {
-      const { blob, report } = await repairGlyphText(docInfo, [originalPageIndex]);
-      if (!isOriginalPageStillCurrent()) return;
+      const { blob, report } = await repairGlyphText(docInfo, [originalPageIndex], {
+        replaceExistingToUnicode: shouldReplaceExistingToUnicode(pageInfo),
+        ocrText: getPageOcrText(pageInfo),
+      });
+      if (!isOriginalPageStillCurrent()) return { status: 'cancelled' };
 
       if (report.fontsRepaired === 0) {
         setPages(prev => prev.map(page => page.id === pageId ? {
@@ -917,13 +1143,13 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           glyphRepairStatus: 'skipped',
           glyphRepairError: report.protectedDocument
             ? 'This PDF is encrypted or signed, so text repair was skipped.'
-            : 'No deterministic glyph repair was available for this page.',
+            : 'This page could not be safely repaired automatically.',
           glyphRepairReport: report,
           glyphDiagnostics: report.afterDiagnostics,
           glyphDiagnosticsStatus: 'complete',
           glyphDiagnosticsError: undefined,
         } : page));
-        return;
+        return { status: 'skipped' };
       }
 
       const docId = uuidv4();
@@ -931,7 +1157,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const repairedDocInfo = await loadPdfDocument(file, docId);
       const repairedPage = await repairedDocInfo.pdfjsDoc.getPage(originalPageIndex);
       const analysis = await analyzePage(repairedPage);
-      if (!isOriginalPageStillCurrent()) return;
+      if (!isOriginalPageStillCurrent()) return { status: 'cancelled' };
 
       setDocuments(prev => ({ ...prev, [docId]: repairedDocInfo }));
       setPages(prev => prev.map(page => page.id === pageId ? {
@@ -951,16 +1177,133 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         glyphRepairError: undefined,
         glyphRepairReport: report,
       } : page));
+      return { status: 'repaired' };
     } catch (err) {
-      if (!isOriginalPageStillCurrent()) return;
+      if (!isOriginalPageStillCurrent()) return { status: 'cancelled' };
 
-      setPages(prev => prev.map(page => page.id === pageId ? {
-        ...page,
-        glyphRepairStatus: 'failed',
-        glyphRepairError: getErrorMessage(err),
-      } : page));
+      const error = getErrorMessage(err);
+      updateGlyphRepairStatusForJob(jobId, pageId, 'failed', error);
+      return { status: 'failed', error };
     }
-  }, [getErrorMessage]);
+  }, [
+    getErrorMessage,
+    getPageOcrText,
+    isGlyphTextRepairJobCurrent,
+    shouldReplaceExistingToUnicode,
+    updateGlyphRepairStatusForJob,
+  ]);
+
+  const repairGlyphTextPages = useCallback(async (pageIds: string[]) => {
+    if (isImportJobBusy(importJobRef.current)) {
+      alert('Wait for the current import to finish before repairing text.');
+      return;
+    }
+    if (isOcrJobBusy(ocrJobRef.current)) {
+      alert('Wait for the current OCR job to finish before repairing text.');
+      return;
+    }
+    if (isGlyphJobBusy(glyphJobRef.current)) {
+      alert('Wait for the current text check to finish before repairing text.');
+      return;
+    }
+    if (isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current)) {
+      alert('Text repair is already running.');
+      return;
+    }
+
+    const candidates = pageIds
+      .map(pageId => pagesRef.current.find(page => page.id === pageId))
+      .filter((page): page is PdfPageInfo => Boolean(page))
+      .filter(page => page.glyphRepairStatus !== 'queued' && page.glyphRepairStatus !== 'running' && page.glyphRepairStatus !== 'complete');
+    if (candidates.length === 0) return;
+
+    const snapshot = captureSnapshot();
+    const jobId = currentGlyphTextRepairJobIdRef.current + 1;
+    currentGlyphTextRepairJobIdRef.current = jobId;
+    glyphTextRepairCancelRef.current = false;
+    glyphTextRepairStopAfterCurrentRef.current = false;
+
+    const targetIds = candidates.map(page => page.id);
+    dispatchGlyphTextRepairJob({ type: 'started', jobId, pageIds: targetIds });
+    setPages(prev => prev.map(page => targetIds.includes(page.id) ? {
+      ...page,
+      glyphRepairStatus: 'queued',
+      glyphRepairError: undefined,
+    } : page));
+
+    let repairedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    const repairedPageIds: string[] = [];
+
+    for (const pageInfo of candidates) {
+      if (
+        !isGlyphTextRepairJobCurrent(jobId) ||
+        glyphTextRepairCancelRef.current ||
+        glyphTextRepairStopAfterCurrentRef.current
+      ) break;
+
+      dispatchGlyphTextRepairJob({ type: 'page-running', jobId, pageId: pageInfo.id });
+      const outcome = await repairGlyphTextPageForJob(pageInfo.id, jobId);
+      if (!isGlyphTextRepairJobCurrent(jobId)) return;
+
+      if (outcome.status === 'repaired') {
+        repairedCount += 1;
+        repairedPageIds.push(pageInfo.id);
+        dispatchGlyphTextRepairJob({ type: 'page-repaired', jobId, pageId: pageInfo.id });
+      } else if (outcome.status === 'skipped') {
+        skippedCount += 1;
+        dispatchGlyphTextRepairJob({ type: 'page-skipped', jobId, pageId: pageInfo.id });
+      } else if (outcome.status === 'failed') {
+        failedCount += 1;
+        dispatchGlyphTextRepairJob({
+          type: 'page-failed',
+          jobId,
+          pageId: pageInfo.id,
+          error: outcome.error ?? 'Text repair failed.',
+        });
+      }
+
+      if (glyphTextRepairCancelRef.current || glyphTextRepairStopAfterCurrentRef.current) break;
+    }
+
+    if (!isGlyphTextRepairJobCurrent(jobId)) return;
+
+    if (glyphTextRepairCancelRef.current) return;
+
+    if (glyphTextRepairStopAfterCurrentRef.current) {
+      dispatchGlyphTextRepairJob({ type: 'cancelled', jobId });
+      glyphTextRepairStopAfterCurrentRef.current = false;
+      if (repairedCount > 0) {
+        startUndoTimer({
+          description: `Repaired text on ${repairedCount} page${repairedCount === 1 ? '' : 's'} before stopping${skippedCount > 0 ? `, ${skippedCount} skipped` : ''}${failedCount > 0 ? `, ${failedCount} failed` : ''}`,
+          expiresAt: Date.now() + UNDO_TIMEOUT_MS,
+          snapshot,
+          exactRestorePageIds: new Set(repairedPageIds),
+        });
+      }
+      return;
+    }
+
+    dispatchGlyphTextRepairJob({ type: 'completed', jobId });
+    if (repairedCount > 0) {
+      startUndoTimer({
+        description: `Repaired text on ${repairedCount} page${repairedCount === 1 ? '' : 's'}${skippedCount > 0 ? `, ${skippedCount} skipped` : ''}${failedCount > 0 ? `, ${failedCount} failed` : ''}`,
+        expiresAt: Date.now() + UNDO_TIMEOUT_MS,
+        snapshot,
+        exactRestorePageIds: new Set(repairedPageIds),
+      });
+    }
+  }, [
+    captureSnapshot,
+    isGlyphTextRepairJobCurrent,
+    repairGlyphTextPageForJob,
+    startUndoTimer,
+  ]);
+
+  const repairGlyphTextPage = useCallback(async (pageId: string) => {
+    await repairGlyphTextPages([pageId]);
+  }, [repairGlyphTextPages]);
 
   const replacePage = useCallback(async (pageId: string, newBlob: Blob) => {
     try {
@@ -1040,12 +1383,13 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     cancelImport();
     cancelOcr();
     cancelGlyphDiagnostics();
+    cancelGlyphTextRepairImmediately();
     setDocuments({});
     setPages([]);
     setActivePageId(null);
     setSelectedPageIds(new Set());
     setRangeInput('');
-  }, [cancelGlyphDiagnostics, cancelImport, cancelOcr]);
+  }, [cancelGlyphDiagnostics, cancelGlyphTextRepairImmediately, cancelImport, cancelOcr]);
 
   const removePageWithUndo = useCallback((id: string) => {
     const pageIndex = pages.findIndex(page => page.id === id);
@@ -1122,9 +1466,18 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const clearAllWithUndo = useCallback(() => {
     if (pages.length === 0) return;
 
+    const activeJobs: string[] = [];
+    if (isImportJobBusy(importJobRef.current)) activeJobs.push('import');
+    if (isOcrJobBusy(ocrJobRef.current)) activeJobs.push('OCR');
+    if (isGlyphJobBusy(glyphJobRef.current)) activeJobs.push('text check');
+    if (isGlyphTextRepairJobBusy(glyphTextRepairJobRef.current)) activeJobs.push('text repair');
+    const jobCopy = activeJobs.length > 0
+      ? ` This will stop the current ${activeJobs.join(', ')} work. Undo restores pages but does not resume stopped jobs.`
+      : '';
+
     requestConfirmedPageMutation({
       title: 'Start over?',
-      message: `Clear all ${pages.length} page${pages.length === 1 ? '' : 's'} from the workspace? You can undo this for a few seconds.`,
+      message: `Clear all ${pages.length} page${pages.length === 1 ? '' : 's'} from the workspace? You can undo this for a few seconds.${jobCopy}`,
       confirmLabel: 'Start over',
       danger: true,
       undoDescription: 'Cleared workspace',
@@ -1132,8 +1485,12 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cancelImport();
         cancelOcr();
         cancelGlyphDiagnostics();
+        cancelGlyphTextRepairImmediately();
       },
       allowDuringImport: true,
+      allowDuringOcr: true,
+      allowDuringGlyphDiagnostics: true,
+      allowDuringRepair: true,
     }, () => ({
       documents: {},
       pages: [],
@@ -1141,7 +1498,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       selectedPageIds: new Set(),
       rangeInput: '',
     }));
-  }, [cancelGlyphDiagnostics, cancelImport, cancelOcr, pages.length, requestConfirmedPageMutation]);
+  }, [cancelGlyphDiagnostics, cancelGlyphTextRepairImmediately, cancelImport, cancelOcr, pages.length, requestConfirmedPageMutation]);
 
   const reorderPage = useCallback((sourceIndex: number, destinationIndex: number) => {
     commitImmediatePageMutation('Reordered page', snapshot => {
@@ -1260,9 +1617,11 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   return (
     <PdfContext.Provider value={{
-      documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob, ocrJob, glyphJob,
+      documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob, ocrJob, glyphJob, glyphTextRepairJob,
       rangeInput, setRangeInput,
-      addFiles, cancelImport, startGlyphDiagnostics, cancelGlyphDiagnostics, repairGlyphTextPage,
+      confirmAction,
+      addFiles, cancelImport, startGlyphDiagnostics, cancelGlyphDiagnostics, repairGlyphTextPage, repairGlyphTextPages,
+      cancelGlyphTextRepair,
       startOcr, cancelOcr, retryFailedOcr,
       setPages, setActivePageId, replacePage, removePage, removePages, extractPages, clearAll,
       removePageWithUndo, removePagesWithUndo, keepOnlyPagesWithUndo, clearAllWithUndo,
@@ -1303,7 +1662,19 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         </div>
       )}
       {pendingUndoState && !confirmRequest && (
-        <div className="undo-toast" role="status" aria-live="polite">
+        <div
+          className="undo-toast"
+          role="status"
+          aria-live="polite"
+          onFocusCapture={pauseUndoTimer}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              resumePausedUndoTimer();
+            }
+          }}
+          onMouseEnter={pauseUndoTimer}
+          onMouseLeave={resumePausedUndoTimer}
+        >
           <span>{pendingUndoState.description}</span>
           <button ref={undoButtonRef} onClick={undoLastPageMutation}>Undo</button>
         </div>

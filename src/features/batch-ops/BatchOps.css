@@ -173,6 +173,11 @@
   color: var(--danger-color);
 }
 
+.page-range-busy {
+  color: #fbbf24;
+  font-weight: 500;
+}
+
 /* PAGE STRIP (FILMSTRIP) */
 .page-strip-container {
   margin-top: 8px;

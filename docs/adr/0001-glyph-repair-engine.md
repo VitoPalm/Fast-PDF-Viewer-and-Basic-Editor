@@ -1,6 +1,6 @@
 # ADR 0001: Glyph Repair Engine
 
-Status: accepted for Phase 4B deterministic repair
+Status: accepted for Phase 4C/4D guarded repair
 
 Date: 2026-07-02
 
@@ -38,8 +38,17 @@ Phase 4B adds conservative mutation:
 - validate by reloading the repaired PDF, rendering selected pages, and
   comparing pixel output before handing bytes back to the renderer.
 
+Phase 4C/4D adds guarded expansion:
+
+- replacement of existing `/ToUnicode` maps only when explicitly requested;
+- strict OCR-assisted mapping from supplied OCR text when glyph events and text
+  codepoints align exactly and consistently;
+- selected/suspect page batch repair in the renderer using the page-level repair
+  path.
+
 The renderer remains responsible for user workflow, page replacement, job
-state, and status UI. OCR-assisted mapping remains a later phase.
+state, and status UI. Geometric OCR alignment and human review remain later
+phases.
 
 ## Consequences
 
@@ -49,3 +58,6 @@ state, and status UI. OCR-assisted mapping remains a later phase.
   `java` exists on the user's machine.
 - `qpdf` and an independent extractor/renderer should be added to CI validation
   before broader batch repair ships.
+- OCR-assisted repair intentionally skips low-confidence alignments; this avoids
+  silently corrupting selectable text while the alignment engine is still
+  conservative.

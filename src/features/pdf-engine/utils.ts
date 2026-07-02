@@ -290,7 +290,7 @@ export const cleanOcrFromPage = async (docInfo: PdfDocumentInfo, pageNumber: num
   return new Blob([outputBuffer], { type: 'application/pdf' });
 };
 
-export const glyphDiagnosticsUnavailableMessage = 'Native glyph diagnostics are unavailable in this environment.';
+export const glyphDiagnosticsUnavailableMessage = 'Text checks are unavailable in this environment.';
 export const glyphRepairUnavailableMessage = 'Native glyph repair is unavailable in this environment.';
 
 export const diagnoseGlyphText = async (
@@ -314,6 +314,7 @@ export const diagnoseGlyphText = async (
 export const repairGlyphText = async (
   docInfo: PdfDocumentInfo,
   pageNumbers: number[],
+  options: { replaceExistingToUnicode?: boolean; ocrText?: string } = {},
 ): Promise<{ blob: Blob; report: GlyphRepairReport }> => {
   if (!window.antigravityPdf?.repairGlyphText) {
     throw new Error(glyphRepairUnavailableMessage);
@@ -321,7 +322,12 @@ export const repairGlyphText = async (
 
   const arrayBuffer = await docInfo.file.arrayBuffer();
   const pdfBytes = new Uint8Array(arrayBuffer);
-  const result = await window.antigravityPdf.repairGlyphText({ pdfBytes, pageNumbers });
+  const result = await window.antigravityPdf.repairGlyphText({
+    pdfBytes,
+    pageNumbers,
+    replaceExistingToUnicode: options.replaceExistingToUnicode,
+    ocrText: options.ocrText,
+  });
   if (!result.ok) {
     throw new Error(result.error.message);
   }

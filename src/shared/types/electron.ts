@@ -29,7 +29,10 @@ export interface GlyphDiagnosticsInput {
   pageNumbers: number[];
 }
 
-export type GlyphRepairInput = GlyphDiagnosticsInput;
+export interface GlyphRepairInput extends GlyphDiagnosticsInput {
+  replaceExistingToUnicode?: boolean;
+  ocrText?: string;
+}
 
 export type GlyphDiagnosticsResult =
   | { ok: true; report: GlyphDiagnosticsReport }

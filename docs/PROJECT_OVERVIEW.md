@@ -48,6 +48,8 @@ pages.
 - Diagnose suspect glyph mappings on pages with broken selectable text.
 - Repair deterministic glyph mappings by adding `/ToUnicode` maps while
   preserving vector artwork.
+- Repair selected/suspect pages in sequence, including strict OCR-assisted
+  replacement when existing OCR text aligns one-for-one with glyph events.
 
 ## Architectural Observations
 
@@ -64,9 +66,10 @@ pages.
   and batch flows.
 - Page analysis now includes text-layer health so suspect native text can be
   routed away from blind DOM text rendering before glyph repair exists.
-- Glyph text diagnostics and deterministic repair now run through a separate
-  PDFBox sidecar, not the OCR overlay path. Ambiguous mappings still route to
-  OCR-assisted future work instead of being mutated blindly.
+- Glyph text diagnostics and guarded repair now run through a separate PDFBox
+  sidecar, not the OCR overlay path. OCR-assisted mapping is intentionally
+  strict: mismatched or conflicting glyph/text alignment is skipped with a
+  report instead of guessed.
 
 ## Current Build And Release Shape
 
@@ -82,11 +85,11 @@ pages.
 
 ## Immediate Engineering Priorities
 
-1. Treat 1.7.0 as the first deterministic glyph repair baseline.
+1. Treat 1.8.0 as the first guarded glyph repair baseline.
 2. Add stronger synthetic fixtures for missing, wrong, Type0, ligature, and
    ambiguous `/ToUnicode` cases.
-3. Design OCR-assisted glyph mapping for pages that cannot be repaired from
-   font metadata alone.
+3. Improve OCR-assisted alignment beyond one-font, one-codepoint-per-glyph
+   pages without introducing low-confidence mutation.
 4. Bundle or locate a Java runtime for packaged glyph diagnostics and repair.
 5. Resolve release, licensing, and bundled asset strategy before public binary
    distribution.

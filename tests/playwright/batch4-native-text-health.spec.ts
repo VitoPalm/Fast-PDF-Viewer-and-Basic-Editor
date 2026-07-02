@@ -88,7 +88,7 @@ test.describe('Batch 4 native bridge and text health', () => {
     const bridgeType = await page.evaluate(() => typeof (window as BridgeWindow).antigravityPdf);
     expect(bridgeType).toBe('undefined');
 
-    await expect(page.locator('.thumbnail-ocr-badge[title="Scanned page (needs OCR)"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: /OCR candidate/i })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('button', { name: /OCR Page/i })).toBeVisible();
   });
 

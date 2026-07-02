@@ -122,6 +122,7 @@ public final class GlyphRepairCli {
       List<Integer> pages = options.resolvePages(document.getNumberOfPages());
       int signatureCount = document.getSignatureDictionaries().size();
       boolean protectedDocument = document.isEncrypted() || signatureCount > 0;
+      String ocrText = options.readOcrText();
       Map<Integer, String> beforeText = extractPageText(document, pages);
       Map<Integer, BufferedImage> beforeImages = renderPages(document, pages);
       Map<PDFont, FontRepairAccumulator> fontAccumulators = new IdentityHashMap<>();
@@ -141,8 +142,14 @@ public final class GlyphRepairCli {
       }
 
       List<FontRepairResult> fontResults = new ArrayList<>();
+      boolean allowOcrAssist = ocrText != null && !ocrText.isBlank() && pages.size() == 1 && fontAccumulators.size() == 1;
       for (FontRepairAccumulator accumulator : fontAccumulators.values()) {
-        fontResults.add(accumulator.repair(document, protectedDocument));
+        fontResults.add(accumulator.repair(
+          document,
+          protectedDocument,
+          options.replaceExistingToUnicode,
+          allowOcrAssist ? ocrText : null
+        ));
       }
       fontResults.sort(Comparator.comparing(result -> result.resourceName));
 
@@ -309,19 +316,31 @@ public final class GlyphRepairCli {
     private final File inputFile;
     private final File outputFile;
     private final String pages;
+    private final boolean replaceExistingToUnicode;
+    private final File ocrTextFile;
 
-    private CliOptions(String command, File inputFile, File outputFile, String pages) {
+    private CliOptions(
+      String command,
+      File inputFile,
+      File outputFile,
+      String pages,
+      boolean replaceExistingToUnicode,
+      File ocrTextFile
+    ) {
       this.command = command;
       this.inputFile = inputFile;
       this.outputFile = outputFile;
       this.pages = pages;
+      this.replaceExistingToUnicode = replaceExistingToUnicode;
+      this.ocrTextFile = ocrTextFile;
     }
 
     static CliOptions parse(String[] args) {
       if (args.length == 0 || (!"diagnose".equals(args[0]) && !"repair".equals(args[0]))) {
         throw new IllegalArgumentException(
           "Usage: glyph-repair diagnose --input <pdf> [--pages 1,2,3|all] | " +
-          "glyph-repair repair --input <pdf> --output <pdf> [--pages 1,2,3|all]"
+          "glyph-repair repair --input <pdf> --output <pdf> [--pages 1,2,3|all] " +
+          "[--replace-existing-to-unicode] [--ocr-text-file <txt>]"
         );
       }
 
@@ -329,6 +348,8 @@ public final class GlyphRepairCli {
       File input = null;
       File output = null;
       String pages = "all";
+      boolean replaceExistingToUnicode = false;
+      File ocrTextFile = null;
       for (int i = 1; i < args.length; i++) {
         String arg = args[i];
         if ("--input".equals(arg) && i + 1 < args.length) {
@@ -337,6 +358,10 @@ public final class GlyphRepairCli {
           output = new File(args[++i]);
         } else if ("--pages".equals(arg) && i + 1 < args.length) {
           pages = args[++i];
+        } else if ("--replace-existing-to-unicode".equals(arg)) {
+          replaceExistingToUnicode = true;
+        } else if ("--ocr-text-file".equals(arg) && i + 1 < args.length) {
+          ocrTextFile = new File(args[++i]);
         } else if ("--format".equals(arg) && i + 1 < args.length) {
           String format = args[++i];
           if (!"json".equals(format)) {
@@ -353,8 +378,18 @@ public final class GlyphRepairCli {
       if ("repair".equals(command) && output == null) {
         throw new IllegalArgumentException("Repair requires --output <pdf>.");
       }
+      if (ocrTextFile != null && !ocrTextFile.isFile()) {
+        throw new IllegalArgumentException("OCR text file does not exist.");
+      }
 
-      return new CliOptions(command, input, output, pages);
+      return new CliOptions(command, input, output, pages, replaceExistingToUnicode, ocrTextFile);
+    }
+
+    String readOcrText() throws IOException {
+      if (ocrTextFile == null) {
+        return null;
+      }
+      return Files.readString(ocrTextFile.toPath(), StandardCharsets.UTF_8);
     }
 
     List<Integer> resolvePages(int pageCount) {
@@ -400,7 +435,9 @@ public final class GlyphRepairCli {
     private final Set<String> resourceNames = new TreeSet<>();
     private final Set<Integer> pageNumbers = new TreeSet<>();
     private final Set<Integer> observedCodes = new TreeSet<>();
+    private final List<Integer> eventCodes = new ArrayList<>();
     private int glyphEvents;
+    private boolean hasUnsafeCurrentMapping;
 
     FontRepairAccumulator(PDFont font) {
       this.font = font;
@@ -410,19 +447,25 @@ public final class GlyphRepairCli {
       pageNumbers.add(pageNumber);
       resourceNames.addAll(builder.resourceNames);
       observedCodes.addAll(builder.uniqueCodes);
+      eventCodes.addAll(builder.eventCodes);
       glyphEvents += builder.glyphEvents;
+      for (int code : builder.uniqueCodes) {
+        hasUnsafeCurrentMapping = hasUnsafeCurrentMapping || !isSafeRepairUnicode(font.toUnicode(code));
+      }
     }
 
-    FontRepairResult repair(PDDocument document, boolean protectedDocument) throws IOException {
+    FontRepairResult repair(
+      PDDocument document,
+      boolean protectedDocument,
+      boolean replaceExistingToUnicode,
+      String ocrText
+    ) throws IOException {
       FontMetadata metadata = FontMetadata.from(font);
       String resourceName = String.join(",", resourceNames);
       List<Integer> pages = new ArrayList<>(pageNumbers);
 
       if (protectedDocument) {
         return skipped(resourceName, metadata, pages, "protected-document", "Encrypted or signed PDFs are not mutated.");
-      }
-      if (metadata.hasToUnicode) {
-        return skipped(resourceName, metadata, pages, "existing-to-unicode", "Font already has a /ToUnicode map.");
       }
       if (metadata.damaged) {
         return skipped(resourceName, metadata, pages, "damaged-font", "PDFBox reported this font as damaged.");
@@ -437,10 +480,80 @@ public final class GlyphRepairCli {
         return skipped(resourceName, metadata, pages, "unsupported-font-type", "Only simple fonts and Type0 fonts are enabled.");
       }
 
+      if (metadata.hasToUnicode && !replaceExistingToUnicode) {
+        return skipped(resourceName, metadata, pages, "existing-to-unicode", "Font already has a /ToUnicode map.");
+      }
+
+      if (metadata.hasToUnicode && ocrText != null && !ocrText.isBlank()) {
+        MappingAttempt ocrAttempt = buildOcrMapping(ocrText);
+        if (ocrAttempt.complete()) {
+          writeToUnicode(document, ocrAttempt.mapping);
+          return repaired(
+            resourceName,
+            metadata,
+            pages,
+            ocrAttempt.mapping.size(),
+            "to-unicode-ocr-assisted-replaced",
+            "Replaced /ToUnicode using strict OCR-to-glyph alignment.",
+            "ocr-strict"
+          );
+        }
+        return skippedFromAttempt(resourceName, metadata, pages, ocrAttempt, "ocr-strict");
+      }
+
+      if (metadata.hasToUnicode && !hasUnsafeCurrentMapping) {
+        return skipped(
+          resourceName,
+          metadata,
+          pages,
+          "existing-to-unicode-appears-readable",
+          "Existing /ToUnicode values are readable; OCR-assisted repair is required before replacing them."
+        );
+      }
+
+      MappingAttempt deterministicAttempt = buildDeterministicMapping(!metadata.hasToUnicode);
+      if (deterministicAttempt.complete()) {
+        writeToUnicode(document, deterministicAttempt.mapping);
+        return repaired(
+          resourceName,
+          metadata,
+          pages,
+          deterministicAttempt.mapping.size(),
+          metadata.hasToUnicode ? "to-unicode-replaced" : "to-unicode-added",
+          metadata.hasToUnicode
+            ? "Replaced a broken /ToUnicode CMap with deterministic mappings."
+            : "Added a deterministic /ToUnicode CMap.",
+          "deterministic"
+        );
+      }
+
+      if (ocrText != null && !ocrText.isBlank()) {
+        MappingAttempt ocrAttempt = buildOcrMapping(ocrText);
+        if (ocrAttempt.complete()) {
+          writeToUnicode(document, ocrAttempt.mapping);
+          return repaired(
+            resourceName,
+            metadata,
+            pages,
+            ocrAttempt.mapping.size(),
+            metadata.hasToUnicode ? "to-unicode-ocr-assisted-replaced" : "to-unicode-ocr-assisted-added",
+            metadata.hasToUnicode
+              ? "Replaced /ToUnicode using strict OCR-to-glyph alignment."
+              : "Added /ToUnicode using strict OCR-to-glyph alignment.",
+            "ocr-strict"
+          );
+        }
+        return skippedFromAttempt(resourceName, metadata, pages, ocrAttempt, "ocr-strict");
+      }
+
+      return skippedFromAttempt(resourceName, metadata, pages, deterministicAttempt, "deterministic");
+    }
+
+    private MappingAttempt buildDeterministicMapping(boolean allowCurrentMapping) throws IOException {
       Map<Integer, String> mapping = new java.util.TreeMap<>();
       List<Integer> unmappedCodes = new ArrayList<>();
       for (int code : observedCodes) {
-        String unicode = deterministicUnicode(font, code);
+        String unicode = deterministicUnicode(font, code, allowCurrentMapping);
         if (isSafeRepairUnicode(unicode)) {
           mapping.put(code, unicode);
         } else {
@@ -449,44 +562,106 @@ public final class GlyphRepairCli {
       }
 
       if (!unmappedCodes.isEmpty()) {
-        return new FontRepairResult(
-          resourceName,
-          metadata,
-          "skipped",
+        return MappingAttempt.skipped(
           "ambiguous-codes",
           "Some observed codes could not be mapped deterministically.",
-          pages,
-          glyphEvents,
-          observedCodes.size(),
-          mapping.size(),
-          unmappedCodes.size(),
-          0,
-          sourceCodeBytes(font),
+          mapping,
           toCodeHexList(unmappedCodes)
         );
       }
       if (mapping.isEmpty()) {
-        return skipped(resourceName, metadata, pages, "no-deterministic-mapping", "No safe code-to-Unicode mapping was found.");
+        return MappingAttempt.skipped(
+          "no-deterministic-mapping",
+          "No safe code-to-Unicode mapping was found.",
+          mapping,
+          Collections.emptyList()
+        );
       }
 
+      return MappingAttempt.complete(mapping);
+    }
+
+    private MappingAttempt buildOcrMapping(String rawOcrText) {
+      List<String> ocrCharacters = normalizeOcrCharacters(rawOcrText);
+      if (ocrCharacters.isEmpty()) {
+        return MappingAttempt.skipped(
+          "ocr-text-missing",
+          "OCR-assisted repair needs OCR text for this page.",
+          Collections.emptyMap(),
+          Collections.emptyList()
+        );
+      }
+      if (ocrCharacters.size() != eventCodes.size()) {
+        return MappingAttempt.skipped(
+          "ocr-text-length-mismatch",
+          "OCR text did not align one-for-one with observed glyph events.",
+          Collections.emptyMap(),
+          Collections.emptyList()
+        );
+      }
+
+      Map<Integer, String> mapping = new java.util.TreeMap<>();
+      List<Integer> conflictCodes = new ArrayList<>();
+      for (int index = 0; index < eventCodes.size(); index++) {
+        int code = eventCodes.get(index);
+        String unicode = ocrCharacters.get(index);
+        if (!isSafeRepairUnicode(unicode)) {
+          conflictCodes.add(code);
+          continue;
+        }
+
+        String existing = mapping.get(code);
+        if (existing != null && !existing.equals(unicode)) {
+          conflictCodes.add(code);
+          continue;
+        }
+        mapping.put(code, unicode);
+      }
+
+      if (!conflictCodes.isEmpty()) {
+        return MappingAttempt.skipped(
+          "ocr-conflicting-code-map",
+          "OCR-assisted mapping found the same glyph code paired with different text.",
+          mapping,
+          toCodeHexList(conflictCodes)
+        );
+      }
+
+      return mapping.isEmpty()
+        ? MappingAttempt.skipped("ocr-no-mapping", "OCR-assisted repair found no usable mappings.", mapping, Collections.emptyList())
+        : MappingAttempt.complete(mapping);
+    }
+
+    private void writeToUnicode(PDDocument document, Map<Integer, String> mapping) throws IOException {
       int sourceBytes = sourceCodeBytes(font);
       COSStream toUnicode = createToUnicodeStream(document, mapping, sourceBytes);
       font.getCOSObject().setItem(COSName.TO_UNICODE, toUnicode);
+    }
 
+    private FontRepairResult repaired(
+      String resourceName,
+      FontMetadata metadata,
+      List<Integer> pages,
+      int mappingSize,
+      String reason,
+      String message,
+      String mappingSource
+    ) {
       return new FontRepairResult(
         resourceName,
         metadata,
         "repaired",
-        "to-unicode-added",
-        "Added a deterministic /ToUnicode CMap.",
+        reason,
+        message,
         pages,
         glyphEvents,
         observedCodes.size(),
-        mapping.size(),
+        mappingSize,
         0,
-        mapping.size(),
-        sourceBytes,
-        Collections.emptyList()
+        mappingSize,
+        sourceCodeBytes(font),
+        Collections.emptyList(),
+        mappingSource
       );
     }
 
@@ -510,15 +685,70 @@ public final class GlyphRepairCli {
         observedCodes.size(),
         0,
         sourceCodeBytes(font),
-        toCodeHexList(new ArrayList<>(observedCodes))
+        toCodeHexList(new ArrayList<>(observedCodes)),
+        "none"
+      );
+    }
+
+    private FontRepairResult skippedFromAttempt(
+      String resourceName,
+      FontMetadata metadata,
+      List<Integer> pages,
+      MappingAttempt attempt,
+      String mappingSource
+    ) {
+      return new FontRepairResult(
+        resourceName,
+        metadata,
+        "skipped",
+        attempt.reason,
+        attempt.message,
+        pages,
+        glyphEvents,
+        observedCodes.size(),
+        attempt.mapping.size(),
+        Math.max(observedCodes.size() - attempt.mapping.size(), 0),
+        0,
+        sourceCodeBytes(font),
+        attempt.unmappedCodeHex,
+        mappingSource
       );
     }
   }
 
-  private static String deterministicUnicode(PDFont font, int code) throws IOException {
-    String unicode = font.toUnicode(code);
-    if (isSafeRepairUnicode(unicode)) {
-      return unicode;
+  private static final class MappingAttempt {
+    private final Map<Integer, String> mapping;
+    private final String reason;
+    private final String message;
+    private final List<String> unmappedCodeHex;
+
+    private MappingAttempt(Map<Integer, String> mapping, String reason, String message, List<String> unmappedCodeHex) {
+      this.mapping = new java.util.TreeMap<>(mapping);
+      this.reason = reason;
+      this.message = message;
+      this.unmappedCodeHex = Collections.unmodifiableList(new ArrayList<>(unmappedCodeHex));
+    }
+
+    static MappingAttempt complete(Map<Integer, String> mapping) {
+      return new MappingAttempt(mapping, "complete", "", Collections.emptyList());
+    }
+
+    static MappingAttempt skipped(String reason, String message, Map<Integer, String> mapping, List<String> unmappedCodeHex) {
+      return new MappingAttempt(mapping, reason, message, unmappedCodeHex);
+    }
+
+    boolean complete() {
+      return "complete".equals(reason) && !mapping.isEmpty();
+    }
+  }
+
+  private static String deterministicUnicode(PDFont font, int code, boolean allowCurrentMapping) throws IOException {
+    String unicode;
+    if (allowCurrentMapping) {
+      unicode = font.toUnicode(code);
+      if (isSafeRepairUnicode(unicode)) {
+        return unicode;
+      }
     }
 
     if (font instanceof PDSimpleFont simpleFont) {
@@ -556,6 +786,16 @@ public final class GlyphRepairCli {
     }
 
     return null;
+  }
+
+  private static List<String> normalizeOcrCharacters(String rawOcrText) {
+    String normalized = rawOcrText.replaceAll("\\s+", " ").trim();
+    if (normalized.isEmpty()) {
+      return Collections.emptyList();
+    }
+    return normalized.codePoints()
+      .mapToObj(codePoint -> new String(Character.toChars(codePoint)))
+      .toList();
   }
 
   private static String unicodeFromTrueTypeGlyph(PDTrueTypeFont font, int code) throws IOException {
@@ -820,6 +1060,7 @@ public final class GlyphRepairCli {
     private final int mappingsAdded;
     private final int sourceCodeBytes;
     private final List<String> unmappedCodeHex;
+    private final String mappingSource;
 
     FontRepairResult(
       String resourceName,
@@ -834,7 +1075,8 @@ public final class GlyphRepairCli {
       int unmappedCodes,
       int mappingsAdded,
       int sourceCodeBytes,
-      List<String> unmappedCodeHex
+      List<String> unmappedCodeHex,
+      String mappingSource
     ) {
       this.resourceName = resourceName;
       this.metadata = metadata;
@@ -849,6 +1091,7 @@ public final class GlyphRepairCli {
       this.mappingsAdded = mappingsAdded;
       this.sourceCodeBytes = sourceCodeBytes;
       this.unmappedCodeHex = Collections.unmodifiableList(new ArrayList<>(unmappedCodeHex));
+      this.mappingSource = mappingSource;
     }
 
     @Override
@@ -867,7 +1110,8 @@ public final class GlyphRepairCli {
       appendNumber(json, "unmappedCodes", unmappedCodes).append(',');
       appendNumber(json, "mappingsAdded", mappingsAdded).append(',');
       appendNumber(json, "sourceCodeBytes", sourceCodeBytes).append(',');
-      appendStringArray(json, "unmappedCodeHex", unmappedCodeHex);
+      appendStringArray(json, "unmappedCodeHex", unmappedCodeHex).append(',');
+      appendString(json, "mappingSource", mappingSource);
       json.append('}');
       return json.toString();
     }
@@ -944,6 +1188,7 @@ public final class GlyphRepairCli {
     private final PDFont font;
     private final Set<String> resourceNames = new TreeSet<>();
     private final Set<Integer> uniqueCodes = new TreeSet<>();
+    private final List<Integer> eventCodes = new ArrayList<>();
     private final List<GlyphSample> samples = new ArrayList<>();
     private int glyphEvents;
     private int unmappedGlyphs;
@@ -967,6 +1212,7 @@ public final class GlyphRepairCli {
       addResourceName(resourceName);
       glyphEvents += 1;
       uniqueCodes.add(code);
+      eventCodes.add(code);
       if (unicode == null || unicode.isEmpty()) {
         unmappedGlyphs += 1;
       } else {

@@ -3,6 +3,8 @@ import { Scissors, Trash2, Download, CheckSquare, X, AlertTriangle } from 'lucid
 import { usePdf } from '../../shared/hooks/usePdf';
 import { isImportJobBusy } from '../../context/importJob';
 import { isOcrJobBusy } from '../../context/ocrJob';
+import { isGlyphTextRepairJobBusy } from '../../context/glyphTextRepairJob';
+import { isGlyphJobBusy } from '../../context/glyphRepairJob';
 import { usePageRangeParser } from './usePageRangeParser';
 import { exportModifiedPdf } from '../pdf-engine/utils';
 import { pageIdsByNumbers } from '../page-operations/pageOperations';
@@ -11,7 +13,7 @@ import './BatchOps.css';
 
 export const PageRangeBar: React.FC = () => {
   const {
-    pages, documents, annotations, importJob, ocrJob,
+    pages, documents, annotations, importJob, ocrJob, glyphJob, glyphTextRepairJob,
     selectPagesByNumbers, removePagesWithUndo, keepOnlyPagesWithUndo,
     rangeInput: input, setRangeInput: setInput
   } = usePdf();
@@ -50,8 +52,8 @@ export const PageRangeBar: React.FC = () => {
   }, [isValid, parsedPages, getPageIdsByNumbers, removePagesWithUndo]);
 
   const handleExportRange = useCallback(async () => {
-    if (isImportJobBusy(importJob) || isOcrJobBusy(ocrJob)) {
-      alert('Wait for import and OCR jobs to finish before exporting.');
+    if (isImportJobBusy(importJob) || isOcrJobBusy(ocrJob) || isGlyphJobBusy(glyphJob) || isGlyphTextRepairJobBusy(glyphTextRepairJob)) {
+      alert('Wait for import, OCR, text checks, and text repair jobs to finish before exporting.');
       return;
     }
     if (!isValid || parsedPages.length === 0) return;
@@ -75,7 +77,7 @@ export const PageRangeBar: React.FC = () => {
     } finally {
       setIsExporting(false);
     }
-  }, [annotations, documents, getPageIdsByNumbers, importJob, input, isValid, ocrJob, pages, parsedPages]);
+  }, [annotations, documents, getPageIdsByNumbers, glyphJob, glyphTextRepairJob, importJob, input, isValid, ocrJob, pages, parsedPages]);
 
   const handleSelect = useCallback(() => {
     if (!isValid || parsedPages.length === 0) return;
@@ -120,7 +122,35 @@ export const PageRangeBar: React.FC = () => {
   const hasErrors = errors.length > 0;
   const showActions = hasInput && parsedPages.length > 0;
   const canRunActions = isValid && parsedPages.length > 0;
-  const canExportRange = canRunActions && !isImportJobBusy(importJob) && !isOcrJobBusy(ocrJob);
+  const isImportBusy = isImportJobBusy(importJob);
+  const isOcrBusy = isOcrJobBusy(ocrJob);
+  const isGlyphBusy = isGlyphJobBusy(glyphJob);
+  const isRepairBusy = isGlyphTextRepairJobBusy(glyphTextRepairJob);
+  const pageMutationBusyReason = isImportBusy
+    ? 'Import running; page changes are disabled.'
+    : isOcrBusy
+      ? 'OCR running; page changes are disabled.'
+      : isGlyphBusy
+        ? 'Text check running; page changes are disabled.'
+        : isRepairBusy
+          ? 'Text repair running; page changes are disabled.'
+          : null;
+  const exportBusyReason = isImportBusy
+    ? 'Import running; export is disabled.'
+    : isOcrBusy
+      ? 'OCR running; export is disabled.'
+      : isGlyphBusy
+        ? 'Text check running; export is disabled.'
+        : isRepairBusy
+          ? 'Text repair running; export is disabled.'
+          : null;
+  const canExportRange = (
+    canRunActions &&
+    !isImportBusy &&
+    !isOcrBusy &&
+    !isGlyphBusy &&
+    !isRepairBusy
+  );
   const describedBy = [
     hasInput ? rangeStatusId : null,
     hasErrors ? rangeErrorId : null,
@@ -154,15 +184,15 @@ export const PageRangeBar: React.FC = () => {
         </div>
         {showActions && (
           <div className="page-range-actions">
-            <button className="page-range-action-btn extract" onClick={handleExtract} disabled={!canRunActions}>
+            <button className="page-range-action-btn extract" onClick={handleExtract} disabled={!canRunActions || Boolean(pageMutationBusyReason)} aria-describedby={pageMutationBusyReason ? rangeStatusId : undefined}>
               <Scissors size={14} />
               <span>Keep Only</span>
             </button>
-            <button className="page-range-action-btn remove" onClick={handleRemove} disabled={!canRunActions}>
+            <button className="page-range-action-btn remove" onClick={handleRemove} disabled={!canRunActions || Boolean(pageMutationBusyReason)} aria-describedby={pageMutationBusyReason ? rangeStatusId : undefined}>
               <Trash2 size={14} />
               <span>Remove</span>
             </button>
-            <button className="page-range-action-btn export" onClick={handleExportRange} disabled={!canExportRange || isExporting}>
+            <button className="page-range-action-btn export" onClick={handleExportRange} disabled={!canExportRange || isExporting} aria-describedby={exportBusyReason ? rangeStatusId : undefined}>
               <Download size={14} />
               <span>{isExporting ? '...' : 'Save as PDF'}</span>
             </button>
@@ -176,6 +206,7 @@ export const PageRangeBar: React.FC = () => {
       {hasInput && (
         <div id={rangeStatusId} className="page-range-status" role="status" aria-live="polite">
           {isValid && parsedPages.length > 0 && <span className="page-range-count">{parsedPages.length} pages in range</span>}
+          {(pageMutationBusyReason || exportBusyReason) && <span className="page-range-busy">{pageMutationBusyReason ?? exportBusyReason}</span>}
           {hasErrors && <span id={rangeErrorId} className="page-range-error"><AlertTriangle size={12} />{errors[0].token}: {errors[0].reason}</span>}
         </div>
       )}

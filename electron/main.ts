@@ -54,6 +54,11 @@ interface ValidGlyphDiagnosticsInput {
   pageNumbers: number[];
 }
 
+interface ValidGlyphRepairInput extends ValidGlyphDiagnosticsInput {
+  replaceExistingToUnicode: boolean;
+  ocrText: string | null;
+}
+
 const getGhostscriptWasmPath = (): string => (
   app.isPackaged
     ? path.join(process.resourcesPath, 'gs.wasm')
@@ -137,6 +142,27 @@ const validateGlyphDiagnosticsInput = (input: unknown): GlyphDiagnosticsResult |
   }
 
   return { pdfBytes, pageNumbers };
+};
+
+const validateGlyphRepairInput = (input: unknown): GlyphRepairResult | ValidGlyphRepairInput => {
+  const validInput = validateGlyphDiagnosticsInput(input);
+  if ('ok' in validInput) {
+    return glyphRepairFailure(validInput.error.code, validInput.error.message);
+  }
+
+  const { replaceExistingToUnicode, ocrText } = isRecord(input) ? input : {};
+  if (replaceExistingToUnicode !== undefined && typeof replaceExistingToUnicode !== 'boolean') {
+    return glyphRepairFailure('invalid-input', 'Glyph repair replaceExistingToUnicode must be a boolean.');
+  }
+  if (ocrText !== undefined && typeof ocrText !== 'string') {
+    return glyphRepairFailure('invalid-input', 'Glyph repair OCR text must be a string.');
+  }
+
+  return {
+    ...validInput,
+    replaceExistingToUnicode: replaceExistingToUnicode === true,
+    ocrText: typeof ocrText === 'string' && ocrText.trim().length > 0 ? ocrText : null,
+  };
 };
 
 const hasPdfHeader = (pdfBytes: Uint8Array): boolean => {
@@ -268,7 +294,7 @@ ipcMain.handle('diagnose-glyph-text', async (_event, input: unknown): Promise<Gl
 });
 
 ipcMain.handle('repair-glyph-text', async (_event, input: unknown): Promise<GlyphRepairResult> => {
-  const validInput = validateGlyphDiagnosticsInput(input);
+  const validInput = validateGlyphRepairInput(input);
   if ('ok' in validInput) {
     return glyphRepairFailure(validInput.error.code, validInput.error.message);
   }
@@ -290,24 +316,37 @@ ipcMain.handle('repair-glyph-text', async (_event, input: unknown): Promise<Glyp
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'antigravity-glyph-repair-'));
   const inputPath = path.join(tempDir, 'input.pdf');
   const outputPath = path.join(tempDir, 'output.pdf');
+  const ocrTextPath = path.join(tempDir, 'ocr.txt');
 
   try {
     await fs.writeFile(inputPath, validInput.pdfBytes);
+    if (validInput.ocrText) {
+      await fs.writeFile(ocrTextPath, validInput.ocrText, 'utf8');
+    }
+
+    const sidecarArgs = [
+      '-jar',
+      glyphRepairJarPath,
+      'repair',
+      '--input',
+      inputPath,
+      '--output',
+      outputPath,
+      '--pages',
+      validInput.pageNumbers.join(','),
+      '--format',
+      'json',
+    ];
+    if (validInput.replaceExistingToUnicode) {
+      sidecarArgs.push('--replace-existing-to-unicode');
+    }
+    if (validInput.ocrText) {
+      sidecarArgs.push('--ocr-text-file', ocrTextPath);
+    }
+
     const { stdout, stderr } = await execFileAsync(
       'java',
-      [
-        '-jar',
-        glyphRepairJarPath,
-        'repair',
-        '--input',
-        inputPath,
-        '--output',
-        outputPath,
-        '--pages',
-        validInput.pageNumbers.join(','),
-        '--format',
-        'json',
-      ],
+      sidecarArgs,
       {
         timeout: 120_000,
         maxBuffer: 16 * 1024 * 1024,

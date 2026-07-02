@@ -146,7 +146,7 @@ describe('Glyph repair renderer bridge', () => {
     await expect(repairGlyphText(createDocInfo(), [2])).rejects.toThrow(glyphRepairUnavailableMessage);
   });
 
-  it('passes PDF bytes and page numbers to the native repair bridge', async () => {
+  it('passes PDF bytes, page numbers, and repair options to the native repair bridge', async () => {
     const capturedInputs: GlyphRepairInput[] = [];
     const bridge: AntigravityPdfBridge = {
       async cleanOcrPage() {
@@ -196,13 +196,18 @@ describe('Glyph repair renderer bridge', () => {
     };
     window.antigravityPdf = bridge;
 
-    const { blob, report } = await repairGlyphText(createDocInfo([7, 8, 9]), [3]);
+    const { blob, report } = await repairGlyphText(createDocInfo([7, 8, 9]), [3], {
+      replaceExistingToUnicode: true,
+      ocrText: 'OCR text',
+    });
     const [input] = capturedInputs;
     if (!input) {
       throw new Error('Expected glyph repair bridge input to be captured.');
     }
 
     expect(input.pageNumbers).toEqual([3]);
+    expect(input.replaceExistingToUnicode).toBe(true);
+    expect(input.ocrText).toBe('OCR text');
     expect(Array.from(input.pdfBytes)).toEqual([7, 8, 9]);
     expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([8, 9, 10]);
     expect(report).toMatchObject({ fontsRepaired: 1, mappingsAdded: 3 });

@@ -710,12 +710,51 @@ Still outside Phase 4B:
 - Write only high-confidence mappings.
 - Present ambiguous mappings for review or skip.
 
+Status: first guarded implementation for `1.8.0` on 2026-07-02.
+
+Completed:
+
+- added sidecar `--ocr-text-file` support for strict single-page OCR-assisted
+  `/ToUnicode` generation;
+- replaces existing `/ToUnicode` only when explicitly requested and either the
+  current mappings are unsafe or OCR text is supplied;
+- requires one-font, one-page, one-codepoint-per-glyph alignment before writing
+  OCR-assisted maps;
+- skips length mismatches and same-code/different-character conflicts with
+  report reasons instead of guessing.
+
+Still outside Phase 4C:
+
+- geometric OCR word/line alignment;
+- multi-font OCR-assisted pages;
+- ligature and many-to-one/many-to-many glyph mappings;
+- human review UI for ambiguous maps.
+
 #### Phase 4D: Batch Repair And Export Integration
 
 - Add batch repair for selected/all suspect pages.
 - Integrate with export pipeline.
 - Add job queue, cancellation, retry, and partial-results reporting.
 - Keep repaired source document separate from original until user saves/exports.
+
+Status: initial selected/suspect batch repair implemented for `1.8.0` on
+2026-07-02.
+
+Completed:
+
+- added a workspace Repair Text toolbar action;
+- selected pages are repaired when a selection exists, otherwise suspect pages
+  are processed;
+- page-level repair status, reports, and sidebar badges are reused for batch
+  progress;
+- export is blocked while any page repair is running.
+
+Still outside Phase 4D:
+
+- dedicated repair job reducer with cancellation/retry;
+- aggregate batch progress pill;
+- one-call multi-page source-document mutation;
+- final export-time repair queue.
 
 ### Synthetic Fixtures
 

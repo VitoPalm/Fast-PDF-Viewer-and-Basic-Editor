@@ -1,5 +1,5 @@
 export type GlyphDiagnosticsStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed' | 'skipped';
-export type GlyphRepairStatus = 'idle' | 'running' | 'complete' | 'failed' | 'skipped';
+export type GlyphRepairStatus = 'idle' | 'queued' | 'running' | 'complete' | 'failed' | 'skipped';
 
 export interface GlyphSample {
   code: number;
@@ -81,6 +81,7 @@ export interface GlyphRepairFontResult {
   mappingsAdded: number;
   sourceCodeBytes: number;
   unmappedCodeHex: string[];
+  mappingSource: 'deterministic' | 'ocr-strict' | 'none' | string;
 }
 
 export interface GlyphRepairValidation {

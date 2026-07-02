@@ -17,6 +17,12 @@ import { OCRHint } from './OCRHint';
 import { getImportJobProgress, isImportJobBusy, isImportJobVisible, type ImportJob } from '../../context/importJob';
 import { getOcrJobProgress, isOcrJobBusy, isOcrJobVisible, type OcrJob } from '../../context/ocrJob';
 import { getGlyphJobProgress, isGlyphJobBusy, isGlyphJobVisible, type GlyphJob } from '../../context/glyphRepairJob';
+import {
+  getGlyphTextRepairJobProgress,
+  isGlyphTextRepairJobBusy,
+  isGlyphTextRepairJobVisible,
+  type GlyphTextRepairJob,
+} from '../../context/glyphTextRepairJob';
 import { isSuspectTextHealth } from '../pdf-engine/textLayerHealth';
 import { type GlyphDiagnosticsReport, type GlyphRepairReport } from '../../shared/types/glyph';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -59,47 +65,69 @@ const formatOcrStatus = (job: OcrJob): string => {
 const formatGlyphStatus = (job: GlyphJob): string => {
   switch (job.phase) {
     case 'preparing':
-      return 'Preparing text diagnostics...';
+      return 'Preparing text check...';
     case 'running':
-      return job.currentPageId ? 'Inspecting glyph mappings...' : 'Diagnosing text...';
+      return job.currentPageId ? 'Checking selectable text...' : 'Checking text...';
     case 'failed':
-      return job.error ?? 'Glyph diagnostics failed';
+      return job.error ?? 'Text check failed';
     case 'cancelled':
-      return 'Glyph diagnostics cancelled';
+      return 'Text check cancelled';
     default:
-      return 'Glyph diagnostics...';
+      return 'Text check...';
+  }
+};
+
+const formatGlyphTextRepairStatus = (job: GlyphTextRepairJob): string => {
+  switch (job.phase) {
+    case 'preparing':
+      return 'Preparing text repair...';
+    case 'running':
+      return job.currentPageId ? 'Repairing selectable text...' : 'Repairing text...';
+    case 'cancelling':
+      return job.currentPageId ? 'Stopping after this page...' : 'Stopping text repair...';
+    case 'complete':
+      return 'Text repair complete';
+    case 'failed':
+      return job.error ?? 'Text repair finished with issues';
+    case 'cancelled':
+      return 'Text repair cancelled';
+    default:
+      return 'Text repair...';
   }
 };
 
 const formatGlyphDiagnosticsSummary = (report: GlyphDiagnosticsReport): string => {
   const page = report.pages[0];
   if (!page || page.glyphEvents === 0) {
-    return 'No vector text glyphs were found on this page.';
+    return 'No selectable text was found on this page.';
   }
 
   if (report.deterministicCandidateFonts > 0) {
-    return `${report.deterministicCandidateFonts} font${report.deterministicCandidateFonts === 1 ? '' : 's'} look repairable by adding a /ToUnicode map.`;
+    return 'Selectable text can likely be repaired without changing page appearance.';
   }
 
   if (report.unmappedGlyphs > 0) {
-    return `${report.unmappedGlyphs}/${report.glyphEvents} glyphs lack Unicode mapping. This page likely needs deeper mapping or OCR-assisted alignment.`;
+    return 'Some selectable text cannot be repaired automatically yet. OCR may help on this page.';
   }
 
-  return `${report.fontCount} font${report.fontCount === 1 ? '' : 's'} inspected; glyph mappings look usable.`;
+  return 'Selectable text looks usable.';
 };
 
 const formatGlyphRepairSummary = (report: GlyphRepairReport): string => {
   if (report.fontsRepaired > 0) {
-    const changedPixels = (report.validation.maxChangedPixelRatio * 100).toFixed(4);
-    return `Repaired ${report.fontsRepaired} font${report.fontsRepaired === 1 ? '' : 's'} with ${report.mappingsAdded} Unicode mappings. Visual validation changed ${changedPixels}% of pixels.`;
+    return 'Repair complete. Page appearance matched before and after.';
   }
 
   const skipped = report.fonts.find(font => font.status === 'skipped');
-  return skipped?.message ?? 'No deterministic glyph repair was available for this page.';
+  return skipped?.message ?? 'No automatic text repair was available for this page.';
 };
 
 const formatCount = (count: number, singular: string, plural = `${singular}s`): string => (
   `${count} ${count === 1 ? singular : plural}`
+);
+
+const pageHasExistingGlyphMapNeedingReview = (report: GlyphDiagnosticsReport | undefined): boolean => (
+  report?.pages.some(page => page.fonts.some(font => font.repairPlan === 'existing-to-unicode-needs-review')) === true
 );
 
 const formatTextHealthReason = (reason: string): string => reason.replace(/-/g, ' ');
@@ -145,10 +173,11 @@ const ocrHintCopy = (analysis: PageAnalysis | null): { title: string; descriptio
 export const Workspace: React.FC = () => {
   const {
     pages, activePageId, setActivePageId, documents,
-    annotations, updateAnnotation, removeAnnotation,
+    selectedPageIds, annotations, updateAnnotation, removeAnnotation,
     addFiles, replacePage, clearAllWithUndo, importJob,
     ocrJob, startOcr, cancelOcr, retryFailedOcr,
-    glyphJob, startGlyphDiagnostics, cancelGlyphDiagnostics, repairGlyphTextPage,
+    glyphJob, startGlyphDiagnostics, cancelGlyphDiagnostics, repairGlyphTextPage, repairGlyphTextPages,
+    glyphTextRepairJob, cancelGlyphTextRepair, confirmAction,
   } = usePdf();
   const { requestPage } = useRenderEngine();
   const [isExporting, setIsExporting] = useState(false);
@@ -174,6 +203,7 @@ export const Workspace: React.FC = () => {
 
   const isOcrRunning = isOcrJobBusy(ocrJob);
   const isGlyphRunning = isGlyphJobBusy(glyphJob);
+  const isGlyphTextRepairRunning = isGlyphTextRepairJobBusy(glyphTextRepairJob);
   const isImportRunning = isImportJobBusy(importJob);
 
   const activePage = pages.find(p => p.id === activePageId);
@@ -280,6 +310,7 @@ export const Workspace: React.FC = () => {
       if (isEditingPageNum) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLElement && e.target.closest('button, a, select, [role="button"], [role="slider"], [role="separator"], [contenteditable="true"]')) return;
 
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); goPrev(); }
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); goNext(); }
@@ -401,13 +432,13 @@ export const Workspace: React.FC = () => {
   };
 
   const handleOCR = async () => {
-    if (!activePage || isOcrRunning) return;
+    if (!activePage || isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) return;
     setDismissedOcrHintPageIds(prev => new Set(prev).add(activePage.id));
     await startOcr([activePage.id], { mode: 'single', force: true });
   };
 
-  const handleBatchOCR = () => {
-    if (isOcrRunning) return;
+  const handleBatchOCR = async () => {
+    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) return;
     const candidateIds = pages.filter(p => isAnalysisOcrCandidate(p.analysis)).map(p => p.id);
     const healthyTextIds = pages.filter(p => (
       p.analysis &&
@@ -419,7 +450,11 @@ export const Workspace: React.FC = () => {
     let includeTextPages = false;
 
     if (healthyTextIds.length > 0) {
-      if (confirm(`Found ${formatCount(healthyTextIds.length, 'page')} with healthy selectable text. Include them in OCR anyway? Their vector graphics will be preserved.`)) {
+      if (await confirmAction({
+        title: 'Include selectable-text pages?',
+        message: `Found ${formatCount(healthyTextIds.length, 'page')} with healthy selectable text. Include them in OCR anyway? Their vector graphics will be preserved.`,
+        confirmLabel: 'Include pages',
+      })) {
         targetIds = [...targetIds, ...healthyTextIds];
         includeTextPages = true;
       }
@@ -430,17 +465,114 @@ export const Workspace: React.FC = () => {
       return;
     }
 
-    if (!confirm(`Process ${formatCount(targetIds.length, 'page')} in background? You can keep browsing.`)) return;
+    if (!await confirmAction({
+      title: 'Run OCR in background?',
+      message: `Process ${formatCount(targetIds.length, 'page')} in the background? You can keep browsing while OCR runs.`,
+      confirmLabel: 'Run OCR',
+    })) return;
     void startOcr(targetIds, { mode: 'batch', includeTextPages });
+  };
+
+  const isGlyphRepairCandidatePage = useCallback((page: typeof pages[number]) => (
+    page.glyphRepairStatus !== 'queued' &&
+    page.glyphRepairStatus !== 'running' &&
+    page.glyphRepairStatus !== 'complete' &&
+    (
+      Boolean(page.glyphDiagnostics?.deterministicCandidateFonts) ||
+      pageHasExistingGlyphMapNeedingReview(page.glyphDiagnostics) ||
+      Boolean(page.ocrResult && page.analysis && isSuspectTextHealth(page.analysis.textHealth))
+    )
+  ), []);
+
+  const selectedRepairScope = selectedPageIds.size > 0 ? selectedPageIds : null;
+  const glyphRepairTargetIds = pages
+    .filter(page => (!selectedRepairScope || selectedRepairScope.has(page.id)) && isGlyphRepairCandidatePage(page))
+    .map(page => page.id);
+  const glyphRepairButtonLabel = isGlyphTextRepairRunning
+    ? 'Repairing...'
+    : `Repair text issues (${glyphRepairTargetIds.length})`;
+  const showBatchGlyphRepairButton = (
+    !selectedRepairScope &&
+    (isGlyphTextRepairRunning || glyphRepairTargetIds.length > 0)
+  );
+  const canStartGlyphTextRepair = (
+    canRepairGlyphText &&
+    !isImportRunning &&
+    !isOcrRunning &&
+    !isGlyphRunning &&
+    !isGlyphTextRepairRunning &&
+    glyphRepairTargetIds.length > 0
+  );
+  const glyphRepairButtonTitle = (() => {
+    if (!canRepairGlyphText) return glyphRepairUnavailableMessage;
+    if (isImportRunning) return 'Wait for import to finish before repairing text.';
+    if (isOcrRunning) return 'Wait for OCR to finish before repairing text.';
+    if (isGlyphRunning) return 'Wait for text checks to finish before repairing text.';
+    if (isGlyphTextRepairRunning) return 'Text repair is already running.';
+    if (glyphRepairTargetIds.length === 0) {
+      return selectedRepairScope
+        ? 'No selected pages are ready for text repair.'
+        : 'No suspect pages are ready for text repair.';
+    }
+    return `${formatCount(glyphRepairTargetIds.length, 'page')} ready for text repair.`;
+  })();
+  const toolbarBusyReason = isImportRunning
+    ? 'Import running; some actions are disabled.'
+    : isOcrRunning
+      ? 'OCR running; export and repair are disabled.'
+      : isGlyphRunning
+        ? 'Text check running; export and repair are disabled.'
+        : isGlyphTextRepairRunning
+          ? 'Text repair running; import, OCR, and export are disabled.'
+          : null;
+  const toolbarBusyReasonId = 'workspace-toolbar-busy-reason';
+  const glyphRepairButtonDescriptionId = 'workspace-repair-button-reason';
+  const glyphRepairButtonDescribedBy = [
+    toolbarBusyReason ? toolbarBusyReasonId : null,
+    glyphRepairButtonTitle ? glyphRepairButtonDescriptionId : null,
+  ].filter(Boolean).join(' ') || undefined;
+
+  const handleBatchGlyphRepair = async () => {
+    if (!canRepairGlyphText) {
+      alert(glyphRepairUnavailableMessage);
+      return;
+    }
+    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for import, OCR, text checks, and text repair jobs to finish before starting another repair.');
+      return;
+    }
+
+    const targetIds = glyphRepairTargetIds;
+
+    if (targetIds.length === 0) {
+      alert('No pages are ready for text repair.');
+      return;
+    }
+
+    if (!await confirmAction({
+      title: 'Repair selectable text?',
+      message: `Repair selectable text on ${formatCount(targetIds.length, 'page')}? The app will use OCR text when available, skip ambiguous pages, and keep page artwork unchanged. Successful repairs can be undone for a few seconds.`,
+      confirmLabel: 'Repair text',
+    })) return;
+    void repairGlyphTextPages(targetIds);
   };
 
   const handleCleanOCR = async () => {
     if (!activePage || !docInfo) return;
+    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for import, OCR, text checks, and text repair jobs to finish before cleaning OCR.');
+      return;
+    }
     if (!canCleanOcr) {
       alert(cleanOcrUnavailableMessage);
       return;
     }
-    if (!confirm("This will permanently remove the existing text layer by re-rendering the page as an image. Continue?")) return;
+    if (!await confirmAction({
+      title: 'Clean OCR from this page?',
+      message: 'This permanently removes the existing text layer by re-rendering the page as an image.',
+      confirmLabel: 'Clean OCR',
+      danger: true,
+    })) return;
 
     setIsExporting(true);
     try {
@@ -465,19 +597,27 @@ export const Workspace: React.FC = () => {
   };
 
   const handleGlyphRepair = async () => {
-    if (!activePage || activePage.glyphRepairStatus === 'running') return;
+    if (!activePage || activePage.glyphRepairStatus === 'queued' || activePage.glyphRepairStatus === 'running') return;
     if (!canRepairGlyphText) {
       alert(glyphRepairUnavailableMessage);
       return;
     }
-    if (!confirm('Repair this page by adding deterministic /ToUnicode mappings? The page artwork should remain unchanged.')) return;
+    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for import, OCR, text checks, and text repair jobs to finish before repairing this page.');
+      return;
+    }
+    if (!await confirmAction({
+      title: 'Repair selectable text?',
+      message: 'Repair selectable text on this page? The app will use OCR text when available, skip ambiguous results, and keep page artwork unchanged.',
+      confirmLabel: 'Repair text',
+    })) return;
 
     await repairGlyphTextPage(activePage.id);
   };
 
   const handleExport = async () => {
-    if (isImportRunning || isOcrRunning || isGlyphRepairing) {
-      alert('Wait for import, OCR, and text repair jobs to finish before exporting.');
+    if (isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) {
+      alert('Wait for import, OCR, text checks, and text repair jobs to finish before exporting.');
       return;
     }
 
@@ -510,6 +650,8 @@ export const Workspace: React.FC = () => {
   const ocrProgress = getOcrJobProgress(ocrJob);
   const showGlyphProgress = isGlyphJobVisible(glyphJob);
   const glyphProgress = getGlyphJobProgress(glyphJob);
+  const showGlyphTextRepairProgress = isGlyphTextRepairJobVisible(glyphTextRepairJob);
+  const glyphTextRepairProgress = getGlyphTextRepairJobProgress(glyphTextRepairJob);
   const effectivePageAnalysis = pageAnalysis ?? activePage.analysis ?? null;
   const showSuspectTextLayer = effectivePageAnalysis ? isSuspectTextHealth(effectivePageAnalysis.textHealth) : false;
   const shouldUseNativeTextLayer = !activePage.ocrResult &&
@@ -521,8 +663,8 @@ export const Workspace: React.FC = () => {
   const hasNativeHiddenOcr = !hasGeneratedOcr && isNativeHiddenOcrAnalysis(effectivePageAnalysis);
   const suspectCopy = effectivePageAnalysis && showSuspectTextLayer ? textHealthCopy(effectivePageAnalysis) : null;
   const hintCopy = ocrHintCopy(effectivePageAnalysis);
-  const isGlyphRepairing = activePage.glyphRepairStatus === 'running';
-  const canRepairActiveGlyphText = Boolean(activePage.glyphDiagnostics?.deterministicCandidateFonts);
+  const activeGlyphRepairBusy = activePage.glyphRepairStatus === 'queued' || activePage.glyphRepairStatus === 'running';
+  const canRepairActiveGlyphText = isGlyphRepairCandidatePage(activePage);
   const glyphSummary = activePage.glyphDiagnostics
     ? formatGlyphDiagnosticsSummary(activePage.glyphDiagnostics)
     : null;
@@ -530,24 +672,43 @@ export const Workspace: React.FC = () => {
     ? formatGlyphRepairSummary(activePage.glyphRepairReport)
     : null;
   const glyphBannerDetail = activePage.glyphRepairError ?? glyphRepairSummary ?? glyphSummary;
+  const exportDisabledReason = isImportRunning
+    ? 'Import running; export is disabled.'
+    : isOcrRunning
+      ? 'OCR running; export is disabled.'
+      : isGlyphRunning
+        ? 'Text check running; export is disabled.'
+        : isGlyphTextRepairRunning
+          ? 'Text repair running; export is disabled.'
+          : null;
 
   return (
     <div className="workspace-viewport">
       <div className="glass workspace-toolbar">
         <div className="workspace-toolbar-group">
-          <label className="btn btn-secondary" data-disabled={isImportRunning ? 'true' : undefined} aria-disabled={isImportRunning}>
+          <label
+            className="btn btn-secondary"
+            data-disabled={(isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning) ? 'true' : undefined}
+            aria-disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning}
+          >
             <input
               type="file"
               multiple
               accept="application/pdf"
               className="visually-hidden-input"
               aria-label="Add PDFs to merge"
-              disabled={isImportRunning}
+              disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning}
               onChange={(e) => {
                 if (e.target.files) addFiles(Array.from(e.target.files));
               }}
             />
-            <Plus size={16} /> {isImportRunning ? 'Importing...' : 'Add PDFs to Merge'}
+            <Plus size={16} /> {
+              isImportRunning
+                ? 'Importing...'
+                : isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning
+                  ? 'Job Running'
+                  : 'Add PDFs to Merge'
+            }
           </label>
           {showImportProgress && (
             <div className="import-progress-pill" data-testid="workspace-import-progress" role="status" aria-live="polite">
@@ -559,6 +720,7 @@ export const Workspace: React.FC = () => {
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={importProgress}
+                aria-valuetext={`${importProgress}% imported`}
               >
                 <div style={{ width: `${importProgress}%` }} />
               </div>
@@ -566,23 +728,44 @@ export const Workspace: React.FC = () => {
           )}
         </div>
         <div className="workspace-toolbar-group workspace-toolbar-actions">
+          {toolbarBusyReason && (
+            <span id={toolbarBusyReasonId} className="sr-only">{toolbarBusyReason}</span>
+          )}
           <button className="btn btn-secondary" onClick={clearAllWithUndo}>Start Over</button>
-          <button className="btn btn-secondary" onClick={handleBatchOCR} disabled={isOcrRunning} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={handleBatchOCR} disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={toolbarBusyReason ? toolbarBusyReasonId : undefined} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Sparkles size={16} /> Batch OCR
           </button>
+          {showBatchGlyphRepairButton && (
+            <>
+              <span id={glyphRepairButtonDescriptionId} className="sr-only">{glyphRepairButtonTitle}</span>
+              <button
+                className="btn btn-secondary"
+                onClick={handleBatchGlyphRepair}
+                disabled={!canStartGlyphTextRepair}
+                title={glyphRepairButtonTitle}
+                aria-describedby={glyphRepairButtonDescribedBy}
+                aria-label={`${glyphRepairButtonLabel}${glyphRepairTargetIds.length > 0 ? `, ${glyphRepairTargetIds.length} pages` : ''}`}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+              >
+                <Wrench size={16} /> {glyphRepairButtonLabel}
+              </button>
+            </>
+          )}
           {pageCanOcr && !hasGeneratedOcr && (
-            <button className="btn btn-primary" onClick={() => handleOCR()} disabled={isOcrRunning} style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button className="btn btn-primary" onClick={() => handleOCR()} disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={toolbarBusyReason ? toolbarBusyReasonId : undefined} style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Sparkles size={16} /> {isOcrRunning ? `Processing...` : 'OCR Page'}
             </button>
           )}
           <button
             className={`btn ${debugTextLayer ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setDebugTextLayer(!debugTextLayer)}
-            title="Show Text Layer Outline"
+            aria-pressed={debugTextLayer}
+            aria-label={debugTextLayer ? 'Hide text boxes' : 'Show text boxes'}
+            title={debugTextLayer ? 'Hide text boxes' : 'Show text boxes'}
           >
-            {debugTextLayer ? 'Hide Mesh' : 'Show Mesh'}
+            {debugTextLayer ? 'Hide Boxes' : 'Show Boxes'}
           </button>
-          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting || isImportRunning || isOcrRunning || isGlyphRepairing}>
+          <button className="btn btn-primary" onClick={handleExport} disabled={isExporting || isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning} aria-describedby={exportDisabledReason ? toolbarBusyReasonId : undefined}>
             <Download size={16} /> {isExporting ? 'Exporting...' : 'Export PDF'}
           </button>
         </div>
@@ -593,20 +776,20 @@ export const Workspace: React.FC = () => {
         onClick={() => setActiveTextId(null)}
       >
         {suspectCopy && !effectivePageAnalysis?.hasOCR && (
-          <div className="glass text-health-banner text-health-banner-warning">
+          <div className="glass text-health-banner text-health-banner-warning" role={activePage.glyphRepairStatus === 'failed' ? 'alert' : 'status'} aria-live={activePage.glyphRepairStatus === 'failed' ? 'assertive' : 'polite'}>
             <div className="text-health-banner-copy">
               <span>{suspectCopy.message}</span>
               <span className="text-health-banner-detail">{glyphBannerDetail ?? suspectCopy.detail}</span>
             </div>
             <div className="text-health-banner-actions">
-              {canDiagnoseGlyphText ? (
-                <button
-                  className="btn btn-secondary text-health-banner-action"
-                  onClick={handleGlyphDiagnostics}
-                  disabled={isGlyphRunning || isGlyphRepairing || activePage.glyphDiagnosticsStatus === 'running'}
-                >
+                {canDiagnoseGlyphText ? (
+                  <button
+                    className="btn btn-secondary text-health-banner-action"
+                    onClick={handleGlyphDiagnostics}
+                    disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning || activeGlyphRepairBusy || activePage.glyphDiagnosticsStatus === 'running'}
+                  >
                   <FileSearch size={14} />
-                  {activePage.glyphDiagnosticsStatus === 'complete' ? 'Run Again' : 'Diagnose Text'}
+                  {activePage.glyphDiagnosticsStatus === 'complete' ? 'Check Again' : 'Check Text'}
                 </button>
               ) : (
                 <span className="text-health-banner-detail">{glyphDiagnosticsUnavailableMessage}</span>
@@ -616,10 +799,10 @@ export const Workspace: React.FC = () => {
                   <button
                     className="btn btn-primary text-health-banner-action"
                     onClick={handleGlyphRepair}
-                    disabled={isGlyphRepairing || isGlyphRunning}
+                    disabled={isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning || activeGlyphRepairBusy}
                   >
                     <Wrench size={14} />
-                    {isGlyphRepairing ? 'Repairing...' : 'Repair Text'}
+                    {activePage.glyphRepairStatus === 'queued' ? 'Queued...' : activePage.glyphRepairStatus === 'running' ? 'Repairing...' : 'Repair Text'}
                   </button>
                 ) : (
                   <span className="text-health-banner-detail">{glyphRepairUnavailableMessage}</span>
@@ -629,19 +812,19 @@ export const Workspace: React.FC = () => {
           </div>
         )}
         {hasGeneratedOcr && (
-          <div className="glass text-health-banner">
+          <div className="glass text-health-banner" role="status" aria-live="polite">
             <span>OCR text added to this page.</span>
           </div>
         )}
         {hasNativeHiddenOcr && (
-          <div className="glass text-health-banner">
-            <span>This page contains a native hidden text layer.</span>
-            {canCleanOcr ? (
-              <button
-                className="btn btn-secondary text-health-banner-action"
-                onClick={handleCleanOCR}
-                disabled={isExporting}
-              >
+          <div className="glass text-health-banner" role="status" aria-live="polite">
+            <span>Existing OCR text found.</span>
+              {canCleanOcr ? (
+                <button
+                  className="btn btn-secondary text-health-banner-action"
+                  onClick={handleCleanOCR}
+                  disabled={isExporting || isImportRunning || isOcrRunning || isGlyphRunning || isGlyphTextRepairRunning}
+                >
                 Clean OCR
               </button>
             ) : (
@@ -732,6 +915,106 @@ export const Workspace: React.FC = () => {
         </div>
       </div>
 
+      {(showOcrProgress || showGlyphProgress || showGlyphTextRepairProgress) && (
+        <div className="workspace-activity-strip" aria-label="Background activity">
+          {showOcrProgress && (
+            <div className="ocr-pill">
+              <Sparkles size={12} className="ocr-pill-icon" />
+              <div className="ocr-pill-info" role="status" aria-live="polite">
+                <span className="ocr-pill-status">{formatOcrStatus(ocrJob)}</span>
+                <span className="ocr-pill-queue">
+                  {ocrJob.completed}/{ocrJob.total} pages
+                  {ocrJob.failed > 0 ? `, ${ocrJob.failed} failed` : ''}
+                  {ocrJob.skipped > 0 ? `, ${ocrJob.skipped} skipped` : ''}
+                </span>
+              </div>
+              <div
+                className="ocr-pill-bar-container"
+                role="progressbar"
+                aria-label="OCR progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={ocrProgress}
+                aria-valuetext={`${ocrProgress}% OCR complete, ${ocrJob.completed} of ${ocrJob.total} pages${ocrJob.failed > 0 ? `, ${ocrJob.failed} failed` : ''}${ocrJob.skipped > 0 ? `, ${ocrJob.skipped} skipped` : ''}`}
+              >
+                <div className="ocr-pill-bar" style={{ width: `${ocrProgress}%` }} />
+              </div>
+              {isOcrRunning && (
+                <button className="ocr-pill-cancel" onClick={cancelOcr} title="Cancel OCR" aria-label="Cancel OCR">
+                  <X size={10} />
+                </button>
+              )}
+              {ocrJob.phase === 'failed' && ocrJob.failedPageIds.length > 0 && (
+                <button className="ocr-pill-retry" onClick={() => void retryFailedOcr()} title="Retry failed OCR pages">
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
+
+          {showGlyphProgress && (
+            <div className="glyph-pill">
+              <FileSearch size={12} className="glyph-pill-icon" />
+              <div className="glyph-pill-info" role="status" aria-live="polite">
+                <span className="glyph-pill-status">{formatGlyphStatus(glyphJob)}</span>
+                <span className="glyph-pill-queue">
+                  {glyphJob.completed}/{glyphJob.total} pages
+                  {glyphJob.failed > 0 ? `, ${glyphJob.failed} failed` : ''}
+                  {glyphJob.skipped > 0 ? `, ${glyphJob.skipped} skipped` : ''}
+                </span>
+              </div>
+              <div
+                className="glyph-pill-bar-container"
+                role="progressbar"
+                aria-label="Text check progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={glyphProgress}
+                aria-valuetext={`${glyphProgress}% text check complete, ${glyphJob.completed} of ${glyphJob.total} pages${glyphJob.failed > 0 ? `, ${glyphJob.failed} failed` : ''}${glyphJob.skipped > 0 ? `, ${glyphJob.skipped} skipped` : ''}`}
+              >
+                <div className="glyph-pill-bar" style={{ width: `${glyphProgress}%` }} />
+              </div>
+              {isGlyphRunning && (
+                <button className="glyph-pill-cancel" onClick={cancelGlyphDiagnostics} title="Cancel text check" aria-label="Cancel text check">
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {showGlyphTextRepairProgress && (
+            <div className="repair-pill">
+              <Wrench size={12} className="repair-pill-icon" />
+              <div className="repair-pill-info" role="status" aria-live="polite">
+                <span className="repair-pill-status">{formatGlyphTextRepairStatus(glyphTextRepairJob)}</span>
+                <span className="repair-pill-queue">
+                  {glyphTextRepairJob.completed}/{glyphTextRepairJob.total} pages
+                  {glyphTextRepairJob.repaired > 0 ? `, ${glyphTextRepairJob.repaired} repaired` : ''}
+                  {glyphTextRepairJob.failed > 0 ? `, ${glyphTextRepairJob.failed} failed` : ''}
+                  {glyphTextRepairJob.skipped > 0 ? `, ${glyphTextRepairJob.skipped} skipped` : ''}
+                </span>
+              </div>
+              <div
+                className="repair-pill-bar-container"
+                role="progressbar"
+                aria-label="Text repair progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={glyphTextRepairProgress}
+                aria-valuetext={`${glyphTextRepairProgress}% text repair complete, ${glyphTextRepairJob.completed} of ${glyphTextRepairJob.total} pages${glyphTextRepairJob.failed > 0 ? `, ${glyphTextRepairJob.failed} failed` : ''}${glyphTextRepairJob.skipped > 0 ? `, ${glyphTextRepairJob.skipped} skipped` : ''}`}
+              >
+                <div className="repair-pill-bar" style={{ width: `${glyphTextRepairProgress}%` }} />
+              </div>
+              {isGlyphTextRepairRunning && (
+                <button className="repair-pill-cancel" onClick={cancelGlyphTextRepair} title="Stop after current page" aria-label="Stop text repair after the current page">
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="page-indicator">
         <button className="page-indicator-nav" onClick={goPrev} disabled={activeIndex <= 0} aria-label="Previous page"><ChevronLeft size={16} /></button>
         {isEditingPageNum ? (
@@ -770,69 +1053,6 @@ export const Workspace: React.FC = () => {
           />
           <span className="zoom-label">{Math.round(scale * 100)}%</span>
         </div>
-
-        {showOcrProgress && (
-          <div className="ocr-pill" role="status" aria-live="polite">
-            <Sparkles size={12} className="ocr-pill-icon" />
-            <div className="ocr-pill-info">
-              <span className="ocr-pill-status">{formatOcrStatus(ocrJob)}</span>
-              <span className="ocr-pill-queue">
-                {ocrJob.completed}/{ocrJob.total} pages
-                {ocrJob.failed > 0 ? `, ${ocrJob.failed} failed` : ''}
-                {ocrJob.skipped > 0 ? `, ${ocrJob.skipped} skipped` : ''}
-              </span>
-            </div>
-            <div
-              className="ocr-pill-bar-container"
-              role="progressbar"
-              aria-label="OCR progress"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={ocrProgress}
-            >
-              <div className="ocr-pill-bar" style={{ width: `${ocrProgress}%` }} />
-            </div>
-            {isOcrRunning && (
-              <button className="ocr-pill-cancel" onClick={cancelOcr} title="Cancel OCR" aria-label="Cancel OCR">
-                <X size={10} />
-              </button>
-            )}
-            {ocrJob.phase === 'failed' && ocrJob.failedPageIds.length > 0 && (
-              <button className="ocr-pill-retry" onClick={() => void retryFailedOcr()} title="Retry failed OCR pages">
-                Retry
-              </button>
-            )}
-          </div>
-        )}
-
-        {showGlyphProgress && (
-          <div className="glyph-pill" role="status" aria-live="polite">
-            <FileSearch size={12} className="glyph-pill-icon" />
-            <div className="glyph-pill-info">
-              <span className="glyph-pill-status">{formatGlyphStatus(glyphJob)}</span>
-              <span className="glyph-pill-queue">
-                {glyphJob.completed}/{glyphJob.total} pages
-                {glyphJob.failed > 0 ? `, ${glyphJob.failed} failed` : ''}
-                {glyphJob.skipped > 0 ? `, ${glyphJob.skipped} skipped` : ''}
-              </span>
-            </div>
-            <div
-              className="glyph-pill-bar-container"
-              role="progressbar"
-              aria-label="Glyph diagnostics progress"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={glyphProgress}
-            >
-              <div className="glyph-pill-bar" style={{ width: `${glyphProgress}%` }} />
-            </div>
-            {isGlyphRunning && (
-              <button className="glyph-pill-cancel" onClick={cancelGlyphDiagnostics} title="Cancel glyph diagnostics" aria-label="Cancel glyph diagnostics">
-                <X size={10} />
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
