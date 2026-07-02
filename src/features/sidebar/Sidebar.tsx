@@ -18,7 +18,7 @@ export const Sidebar: React.FC = () => {
     pages, activePageId, setActivePageId,
     removePageWithUndo, removePagesWithUndo, documents,
     selectedPageIds, togglePageSelection, selectPageRange,
-    selectAll, clearSelection, invertSelection, setOcrQueue,
+    selectAll, clearSelection, invertSelection, startOcr,
     reorderSelectedPages,
   } = usePdf();
   
@@ -304,9 +304,8 @@ export const Sidebar: React.FC = () => {
                 }
                 if (!confirm(`Run OCR on ${selectedScanned.length} pages? This might take a while.`)) return;
 
-                // Start batch OCR in context
                 const ids = selectedScanned.map(p => p.id);
-                setOcrQueue(ids);
+                void startOcr(ids, { mode: 'selected' });
               }} title="OCR Selected Pages">
                 <Sparkles size={14} />
               </button>
@@ -367,7 +366,22 @@ const ThumbnailItemContent: React.FC<ThumbnailItemContentProps> = ({
               !
             </div>
           )}
-          {page.analysis?.isScanned && (
+          {(page.ocrStatus === 'queued' || page.ocrStatus === 'running') && (
+            <div className="thumbnail-ocr-badge running" title="OCR in progress">
+              <Sparkles size={10} />
+            </div>
+          )}
+          {page.ocrStatus === 'failed' && (
+            <div className="thumbnail-ocr-badge failed" title={page.ocrError ?? 'OCR failed'}>
+              !
+            </div>
+          )}
+          {page.ocrStatus === 'skipped' && (
+            <div className="thumbnail-ocr-badge skipped" title="OCR skipped">
+              -
+            </div>
+          )}
+          {page.analysis?.isScanned && page.ocrStatus !== 'running' && page.ocrStatus !== 'queued' && page.ocrStatus !== 'complete' && (
             <div className="thumbnail-ocr-badge" title="Scanned page (needs OCR)">
               <Sparkles size={10} />
             </div>

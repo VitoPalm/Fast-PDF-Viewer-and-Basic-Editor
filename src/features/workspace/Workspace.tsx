@@ -4,20 +4,11 @@ import { useRenderEngine } from '../pdf-engine/useRenderEngine';
 import { Trash2, ChevronLeft, ChevronRight, Plus, Download, Sparkles, X } from 'lucide-react';
 import { type TextAnnotation } from '../../shared/types/pdf';
 import { exportModifiedPdf, cleanOcrFromPage, type PageAnalysis } from '../pdf-engine/utils';
-import { OCRService } from '../pdf-engine/ocrService';
-import { detectLanguage } from '../pdf-engine/languageDetector';
 import { OCRHint } from './OCRHint';
 import { getImportJobProgress, isImportJobVisible, type ImportJob } from '../../context/importJob';
+import { getOcrJobProgress, isOcrJobBusy, isOcrJobVisible, type OcrJob } from '../../context/ocrJob';
 import * as pdfjsLib from 'pdfjs-dist';
 import './Workspace.css';
-
-const OCR_RENDER_SCALE = 2.0;
-
-interface BatchOCRState {
-  total: number;
-  processed: number;
-  status: string;
-}
 
 const formatImportStatus = (job: ImportJob): string => {
   switch (job.phase) {
@@ -36,11 +27,29 @@ const formatImportStatus = (job: ImportJob): string => {
   }
 };
 
+const formatOcrStatus = (job: OcrJob): string => {
+  switch (job.phase) {
+    case 'preparing':
+      return 'Preparing OCR...';
+    case 'detecting-language':
+      return 'Detecting language...';
+    case 'running':
+      return job.currentPageId ? 'Recognizing text...' : 'Processing OCR...';
+    case 'failed':
+      return job.error ?? 'OCR failed';
+    case 'cancelled':
+      return 'OCR cancelled';
+    default:
+      return 'OCR processing...';
+  }
+};
+
 export const Workspace: React.FC = () => {
   const {
     pages, activePageId, setActivePageId, documents,
     annotations, updateAnnotation, removeAnnotation,
-    addFiles, setPages, replacePage, clearAllWithUndo, importJob,
+    addFiles, replacePage, clearAllWithUndo, importJob,
+    ocrJob, startOcr, cancelOcr, retryFailedOcr,
   } = usePdf();
   const { requestPage } = useRenderEngine();
   const [isExporting, setIsExporting] = useState(false);
@@ -55,12 +64,6 @@ export const Workspace: React.FC = () => {
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const textLayerRef = useRef<HTMLDivElement>(null);
-  const [ocrProgress, setOcrProgress] = useState<number | null>(null);
-  const [ocrStatus, setOcrStatus] = useState<string>('');
-  const [batchOCR, setBatchOCR] = useState<BatchOCRState | null>(null);
-  const batchCancelRef = useRef(false);
-  const documentsRef = useRef(documents);
-  const pagesRef = useRef(pages);
   const [showOcrHint, setShowOcrHint] = useState(true);
   const [debugTextLayer, setDebugTextLayer] = useState(false);
   const [pageAnalysis, setPageAnalysis] = useState<PageAnalysis | null>(null);
@@ -70,10 +73,7 @@ export const Workspace: React.FC = () => {
   const [isEditingPageNum, setIsEditingPageNum] = useState(false);
   const pageInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { documentsRef.current = documents; }, [documents]);
-  useEffect(() => { pagesRef.current = pages; }, [pages]);
-
-  const isBatchRunning = batchOCR !== null;
+  const isOcrRunning = isOcrJobBusy(ocrJob);
 
   const activePage = pages.find(p => p.id === activePageId);
   const activeIndex = pages.findIndex(p => p.id === activePageId);
@@ -281,169 +281,23 @@ export const Workspace: React.FC = () => {
   };
 
   const handleOCR = async () => {
-    if (!activePage || !docInfo || !canvasRef.current || isBatchRunning) return;
-
-    setOcrProgress(0);
-    setOcrStatus('Initializing Engine...');
-
-    try {
-      const result = await OCRService.performOCR(canvasRef.current, (prog) => {
-        setOcrProgress(prog);
-        if (prog < 30) setOcrStatus('Analyzing image structure...');
-        else if (prog < 70) setOcrStatus('Recognizing characters...');
-        else setOcrStatus('Finalizing text layer...');
-      });
-
-      setOcrStatus('Complete!');
-      setOcrProgress(100);
-
-      const ocrResult = {
-        items: result.items.map(item => ({
-          str: item.str,
-          transform: [1, 0, 0, 1, item.transform[4] / scale, item.transform[5] / scale],
-          width: item.width / scale,
-          height: item.height / scale
-        }))
-      };
-
-      setPages(prev => prev.map(p => p.id === activePage.id ? { ...p, ocrResult } : p));
-
-      if (textLayerRef.current) {
-        textLayerRef.current.innerHTML = '';
-      }
-
-      setPageAnalysis(prev => prev ? { ...prev, isScanned: false, hasOCR: true } : null);
-      setShowOcrHint(false);
-    } catch (err) {
-      console.error("OCR failed", err);
-      setOcrStatus('Error occurred during processing.');
-    } finally {
-      setTimeout(() => {
-        setOcrProgress(null);
-        setOcrStatus('');
-      }, 1500);
-    }
-  };
-
-  const runBatchOCR = async (targetIds: string[], shouldFlatten: boolean) => {
-    const total = targetIds.length;
-    let processed = 0;
-    batchCancelRef.current = false;
-    setBatchOCR({ total, processed: 0, status: 'Starting...' });
-
-    try {
-      // Phase 1: Flatten pages that need it (sequential — modifies state)
-      if (shouldFlatten) {
-        for (const pageId of targetIds) {
-          if (batchCancelRef.current) break;
-          const pg = pagesRef.current.find(p => p.id === pageId);
-          if (!pg || !pg.analysis?.hasText) continue;
-          const di = documentsRef.current[pg.docId];
-          if (!di) continue;
-          setBatchOCR({ total, processed, status: `Flattening page...` });
-          const blob = await cleanOcrFromPage(di, pg.originalPageIndex);
-          await replacePage(pageId, blob);
-          await new Promise(r => setTimeout(r, 200)); // let state settle
-        }
-      }
-
-      if (batchCancelRef.current) return;
-
-      // Phase 1.5: Language Detection Sampling
-      let batchLangs = 'eng';
-      setBatchOCR({ total, processed: 0, status: 'Detecting language...' });
-
-      if (targetIds.length > 0) {
-        const samplePageId = targetIds[0];
-        const samplePg = pagesRef.current.find(p => p.id === samplePageId);
-        const sampleDi = samplePg ? documentsRef.current[samplePg.docId] : null;
-
-        if (samplePg && sampleDi) {
-          const pdfPage = await sampleDi.pdfjsDoc.getPage(samplePg.originalPageIndex);
-          const viewport = pdfPage.getViewport({ scale: OCR_RENDER_SCALE });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          const ctx = canvas.getContext('2d')!;
-          await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-
-          const sampleResult = await OCRService.performOCR(canvas, undefined, 'eng');
-          const detected = detectLanguage(sampleResult.text);
-          if (detected) {
-            batchLangs = `eng+${detected.code}`;
-            console.log(`Auto-detected secondary language: ${detected.name}`);
-          }
-        }
-      }
-
-      if (batchCancelRef.current) return;
-
-      // Phase 2: OCR all pages in parallel via worker pool
-      setBatchOCR({ total, processed: 0, status: 'Processing...' });
-
-      const processPage = async (pageId: string) => {
-        if (batchCancelRef.current) return;
-        const pg = pagesRef.current.find(p => p.id === pageId);
-        if (!pg) return;
-        const di = documentsRef.current[pg.docId];
-        if (!di) return;
-
-        const pdfPage = await di.pdfjsDoc.getPage(pg.originalPageIndex);
-        const viewport = pdfPage.getViewport({ scale: OCR_RENDER_SCALE });
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
-        const ctx = canvas.getContext('2d')!;
-        await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-
-        const result = await OCRService.performBatchPageOCR(canvas, batchLangs);
-
-        const ocrResult = {
-          items: result.items.map(item => ({
-            str: item.str,
-            transform: [1, 0, 0, 1, item.transform[4] / OCR_RENDER_SCALE, item.transform[5] / OCR_RENDER_SCALE],
-            width: item.width / OCR_RENDER_SCALE,
-            height: item.height / OCR_RENDER_SCALE,
-          }))
-        };
-
-        setPages(prev => prev.map(p => p.id === pageId ? { ...p, ocrResult } : p));
-        processed++;
-        setBatchOCR(prev => prev ? { ...prev, processed, status: 'Processing...' } : null);
-      };
-
-      // Concurrency-limited runner
-      const concurrency = OCRService.POOL_SIZE;
-      let idx = 0;
-      const worker = async () => {
-        while (idx < targetIds.length) {
-          if (batchCancelRef.current) return;
-          const i = idx++;
-          await processPage(targetIds[i]);
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(concurrency, targetIds.length) }, worker));
-
-    } catch (err) {
-      console.error("Batch OCR failed", err);
-    } finally {
-      setBatchOCR(prev => prev ? { ...prev, status: 'Complete!' } : null);
-      setTimeout(() => setBatchOCR(null), 1500);
-    }
+    if (!activePage || isOcrRunning) return;
+    setShowOcrHint(false);
+    await startOcr([activePage.id], { mode: 'single', force: true });
   };
 
   const handleBatchOCR = () => {
-    if (isBatchRunning) return;
+    if (isOcrRunning) return;
     const scannedIds = pages.filter(p => p.analysis?.isScanned === true).map(p => p.id);
     const hasTextIds = pages.filter(p => p.analysis?.isScanned === false).map(p => p.id);
 
     let targetIds = [...scannedIds];
-    const shouldFlatten = false;
+    let includeTextPages = false;
 
     if (hasTextIds.length > 0) {
       if (confirm(`Found ${hasTextIds.length} pages that already have text. Do you want to run OCR on them anyway? (Their vector graphics will be preserved)`)) {
         targetIds = [...targetIds, ...hasTextIds];
-        // We no longer flatten them! We keep the original vectorized PDF!
+        includeTextPages = true;
       }
     }
 
@@ -453,15 +307,9 @@ export const Workspace: React.FC = () => {
     }
 
     if (!confirm(`Process ${targetIds.length} pages in background? You can keep browsing.`)) return;
-    runBatchOCR(targetIds, shouldFlatten);
+    void startOcr(targetIds, { mode: 'batch', includeTextPages });
   };
 
-  const handleCancelBatch = () => {
-    if (!batchOCR) return;
-    if (confirm(`Stop OCR? ${batchOCR.processed} of ${batchOCR.total} pages completed will keep their results.`)) {
-      batchCancelRef.current = true;
-    }
-  };
   const handleCleanOCR = async () => {
     if (!activePage || !docInfo) return;
     if (!confirm("This will permanently remove the existing text layer by re-rendering the page as an image. Continue?")) return;
@@ -504,6 +352,8 @@ export const Workspace: React.FC = () => {
 
   const showImportProgress = isImportJobVisible(importJob);
   const importProgress = getImportJobProgress(importJob);
+  const showOcrProgress = isOcrJobVisible(ocrJob);
+  const ocrProgress = getOcrJobProgress(ocrJob);
 
   return (
     <div className="workspace-viewport" style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -532,12 +382,12 @@ export const Workspace: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
           <button className="btn btn-secondary" onClick={clearAllWithUndo}>Start Over</button>
-          <button className="btn btn-secondary" onClick={handleBatchOCR} disabled={isBatchRunning} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={handleBatchOCR} disabled={isOcrRunning} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Sparkles size={16} /> Batch OCR
           </button>
           {pageAnalysis?.isScanned && (
-            <button className="btn btn-primary" onClick={() => handleOCR()} disabled={ocrProgress !== null || isBatchRunning} style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Sparkles size={16} /> {ocrProgress !== null ? `Processing...` : 'OCR Page'}
+            <button className="btn btn-primary" onClick={() => handleOCR()} disabled={isOcrRunning} style={{ background: 'var(--accent-color)', borderColor: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Sparkles size={16} /> {isOcrRunning ? `Processing...` : 'OCR Page'}
             </button>
           )}
           <button
@@ -571,7 +421,7 @@ export const Workspace: React.FC = () => {
           onMouseDown={handleMouseDown}
         >
 
-          {pageAnalysis?.isScanned && !activePage?.ocrResult && showOcrHint && ocrProgress === null && !isBatchRunning && (
+          {pageAnalysis?.isScanned && !activePage?.ocrResult && showOcrHint && !isOcrRunning && (
             <OCRHint onOCR={() => handleOCR()} onDismiss={() => setShowOcrHint(false)} />
           )}
           <canvas ref={canvasRef} style={{ display: 'block' }} />
@@ -675,33 +525,30 @@ export const Workspace: React.FC = () => {
           <span className="zoom-label">{Math.round(scale * 100)}%</span>
         </div>
 
-        {/* Single-page OCR progress */}
-        {ocrProgress !== null && !isBatchRunning && (
+        {showOcrProgress && (
           <div className="ocr-pill">
             <Sparkles size={12} className="ocr-pill-icon" />
             <div className="ocr-pill-info">
-              <span className="ocr-pill-status">{ocrStatus}</span>
+              <span className="ocr-pill-status">{formatOcrStatus(ocrJob)}</span>
+              <span className="ocr-pill-queue">
+                {ocrJob.completed}/{ocrJob.total} pages
+                {ocrJob.failed > 0 ? `, ${ocrJob.failed} failed` : ''}
+                {ocrJob.skipped > 0 ? `, ${ocrJob.skipped} skipped` : ''}
+              </span>
             </div>
             <div className="ocr-pill-bar-container">
               <div className="ocr-pill-bar" style={{ width: `${ocrProgress}%` }} />
             </div>
-          </div>
-        )}
-
-        {/* Batch OCR progress with cancel */}
-        {batchOCR && (
-          <div className="ocr-pill">
-            <Sparkles size={12} className="ocr-pill-icon" />
-            <div className="ocr-pill-info">
-              <span className="ocr-pill-status">{batchOCR.status}</span>
-              <span className="ocr-pill-queue">{batchOCR.processed}/{batchOCR.total} pages</span>
-            </div>
-            <div className="ocr-pill-bar-container">
-              <div className="ocr-pill-bar" style={{ width: `${(batchOCR.processed / batchOCR.total) * 100}%` }} />
-            </div>
-            <button className="ocr-pill-cancel" onClick={handleCancelBatch} title="Cancel batch OCR">
-              <X size={10} />
-            </button>
+            {isOcrRunning && (
+              <button className="ocr-pill-cancel" onClick={cancelOcr} title="Cancel OCR">
+                <X size={10} />
+              </button>
+            )}
+            {ocrJob.phase === 'failed' && ocrJob.failedPageIds.length > 0 && (
+              <button className="ocr-pill-retry" onClick={() => void retryFailedOcr()} title="Retry failed OCR pages">
+                Retry
+              </button>
+            )}
           </div>
         )}
       </div>

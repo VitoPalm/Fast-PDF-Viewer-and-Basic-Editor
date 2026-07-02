@@ -339,3 +339,22 @@
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
 }
+
+.ocr-pill-retry {
+  height: 22px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--surface-color);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 0 8px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.ocr-pill-retry:hover {
+  background: var(--surface-highlight);
+  border-color: rgba(255, 255, 255, 0.16);
+}

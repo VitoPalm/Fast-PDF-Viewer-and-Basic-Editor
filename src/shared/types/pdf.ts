@@ -1,6 +1,7 @@
 import React from 'react';
 import { type PdfDocumentInfo, type PdfPageInfo } from '../../features/pdf-engine/utils';
 import { type ImportJob } from '../../context/importJob';
+import { type OcrJob, type OcrJobOptions } from '../../context/ocrJob';
 
 export interface TextAnnotation {
   id: string;
@@ -25,8 +26,12 @@ export interface PdfContextType {
   annotations: TextAnnotation[];
   isLoading: boolean;
   importJob: ImportJob;
+  ocrJob: OcrJob;
   addFiles: (files: File[]) => Promise<void>;
   cancelImport: () => void;
+  startOcr: (pageIds: string[], options: OcrJobOptions) => Promise<void>;
+  cancelOcr: () => void;
+  retryFailedOcr: () => Promise<void>;
   setPages: React.Dispatch<React.SetStateAction<PdfPageInfo[]>>;
   setActivePageId: (id: string | null) => void;
   replacePage: (pageId: string, newBlob: Blob) => Promise<void>;
@@ -53,6 +58,4 @@ export interface PdfContextType {
   invertSelection: () => void;
   rangeInput: string;
   setRangeInput: (val: string) => void;
-  ocrQueue: string[];
-  setOcrQueue: React.Dispatch<React.SetStateAction<string[]>>;
 }

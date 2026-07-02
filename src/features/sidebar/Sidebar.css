@@ -225,6 +225,24 @@
   animation: fadeIn 0.3s ease;
 }
 
+.thumbnail-ocr-badge.running {
+  animation: analysisPulse 1.5s ease-in-out infinite;
+}
+
+.thumbnail-ocr-badge.failed {
+  background: var(--danger-color);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.thumbnail-ocr-badge.skipped {
+  background: rgba(20, 22, 28, 0.88);
+  color: var(--text-secondary);
+  border: 1px solid var(--surface-border);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .thumbnail-analysis-badge {
   position: absolute;
   right: 4px;

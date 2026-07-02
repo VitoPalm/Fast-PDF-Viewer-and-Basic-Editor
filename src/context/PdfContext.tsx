@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { type PdfDocumentInfo, type PdfPageInfo, loadPdfDocument, analyzePage } from '../features/pdf-engine/utils';
 import { type TextAnnotation } from '../shared/types/pdf';
 import { OCRService } from '../features/pdf-engine/ocrService';
+import { detectLanguage } from '../features/pdf-engine/languageDetector';
 import {
   applyPageAnalysisUpdateForJob,
   createIdleImportJob,
@@ -11,6 +12,15 @@ import {
   isImportJobBusy,
   orderImportedPagesForAnalysis,
 } from './importJob';
+import {
+  applyPageOcrResultForJob,
+  applyPageOcrStatusForJob,
+  createIdleOcrJob,
+  getOcrCandidatePages,
+  isOcrJobBusy,
+  ocrJobReducer,
+  type OcrJobOptions,
+} from './ocrJob';
 import {
   getNextActivePageId,
   keepOnlyPagesById,
@@ -22,6 +32,7 @@ import { PdfContext } from './PdfContextDef';
 import './PdfContext.css';
 
 const UNDO_TIMEOUT_MS = 8000;
+const OCR_RENDER_SCALE = 2.0;
 
 interface PageStateSnapshot {
   documents: Record<string, PdfDocumentInfo>;
@@ -60,15 +71,19 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [selectedPageIds, setSelectedPageIds] = useState<Set<string>>(new Set());
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [rangeInput, setRangeInput] = useState('');
-  const [ocrQueue, setOcrQueue] = useState<string[]>([]);
   const [importJob, dispatchImportJob] = useReducer(importJobReducer, createIdleImportJob());
+  const [ocrJob, dispatchOcrJob] = useReducer(ocrJobReducer, createIdleOcrJob());
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [pendingUndoState, setPendingUndoState] = useState<PendingUndoState | null>(null);
   const undoTimerRef = useRef<number | null>(null);
   const activePageIdRef = useRef<string | null>(activePageId);
+  const documentsRef = useRef(documents);
+  const pagesRef = useRef(pages);
   const currentImportJobIdRef = useRef(0);
+  const currentOcrJobIdRef = useRef(0);
+  const ocrCancelRef = useRef(false);
 
-  const isLoading = isImportJobBusy(importJob);
+  const isLoading = isImportJobBusy(importJob) || isOcrJobBusy(ocrJob);
 
   useEffect(() => {
     // Pre-initialize OCR engine in the background
@@ -85,8 +100,20 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     activePageIdRef.current = activePageId;
   }, [activePageId]);
 
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
+
+  useEffect(() => {
+    pagesRef.current = pages;
+  }, [pages]);
+
   const isImportJobCurrent = useCallback((jobId: number) => (
     currentImportJobIdRef.current === jobId
+  ), []);
+
+  const isOcrJobCurrent = useCallback((jobId: number) => (
+    currentOcrJobIdRef.current === jobId
   ), []);
 
   const getErrorMessage = useCallback((err: unknown): string => (
@@ -101,6 +128,217 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       dispatchImportJob({ type: 'cancelled', jobId: cancelledJobId });
     }
   }, []);
+
+  const updateOcrStatusForJob = useCallback((
+    jobId: number,
+    pageId: string,
+    status: PdfPageInfo['ocrStatus'],
+    error?: string,
+  ) => {
+    setPages(prev => applyPageOcrStatusForJob(prev, {
+      currentJobId: currentOcrJobIdRef.current,
+      jobId,
+      pageId,
+      status,
+      error,
+    }));
+  }, []);
+
+  const renderPageForOcr = useCallback(async (pageInfo: PdfPageInfo): Promise<HTMLCanvasElement> => {
+    const docInfo = documentsRef.current[pageInfo.docId];
+    if (!docInfo) throw new Error(`Missing PDF document for page ${pageInfo.originalPageIndex}`);
+
+    const pdfPage = await docInfo.pdfjsDoc.getPage(pageInfo.originalPageIndex);
+    const viewport = pdfPage.getViewport({ scale: OCR_RENDER_SCALE });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Unable to create OCR canvas context.');
+
+    await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+    return canvas;
+  }, []);
+
+  const applyOcrResultForJob = useCallback((
+    jobId: number,
+    pageId: string,
+    result: Awaited<ReturnType<typeof OCRService.performOCR>>,
+  ) => {
+    if (!isOcrJobCurrent(jobId)) return;
+
+    const ocrResult = {
+      items: result.items.map(item => ({
+        str: item.str,
+        transform: [1, 0, 0, 1, item.transform[4] / OCR_RENDER_SCALE, item.transform[5] / OCR_RENDER_SCALE],
+        width: item.width / OCR_RENDER_SCALE,
+        height: item.height / OCR_RENDER_SCALE,
+      })),
+    };
+
+    setPages(prev => applyPageOcrResultForJob(prev, {
+      currentJobId: currentOcrJobIdRef.current,
+      jobId,
+      pageId,
+      ocrResult,
+    }));
+  }, [isOcrJobCurrent]);
+
+  const cancelOcr = useCallback(() => {
+    const cancelledJobId = currentOcrJobIdRef.current;
+    if (cancelledJobId <= 0) return;
+
+    ocrCancelRef.current = true;
+    const skippedIds = pagesRef.current
+      .filter(page => page.ocrStatus === 'queued' || page.ocrStatus === 'running')
+      .map(page => page.id);
+
+    skippedIds.forEach(pageId => {
+      updateOcrStatusForJob(cancelledJobId, pageId, 'skipped');
+      dispatchOcrJob({ type: 'page-skipped', jobId: cancelledJobId, pageId });
+    });
+
+    dispatchOcrJob({ type: 'cancelled', jobId: cancelledJobId });
+    currentOcrJobIdRef.current += 1;
+  }, [updateOcrStatusForJob]);
+
+  const startOcr = useCallback(async (pageIds: string[], options: OcrJobOptions) => {
+    const candidates = getOcrCandidatePages(pagesRef.current, pageIds, options);
+    if (candidates.length === 0) return;
+
+    if (isOcrJobBusy(ocrJob)) {
+      cancelOcr();
+    }
+
+    const jobId = currentOcrJobIdRef.current + 1;
+    currentOcrJobIdRef.current = jobId;
+    ocrCancelRef.current = false;
+
+    const targetIds = candidates.map(page => page.id);
+    dispatchOcrJob({ type: 'started', jobId, pageIds: targetIds, options });
+
+    setPages(prev => prev.map(page => targetIds.includes(page.id) ? {
+      ...page,
+      ocrStatus: 'queued',
+      ocrError: undefined,
+    } : page));
+
+    const renderedPages = new Map<string, HTMLCanvasElement>();
+    const getRenderedPage = async (pageInfo: PdfPageInfo) => {
+      const cached = renderedPages.get(pageInfo.id);
+      if (cached) return cached;
+      const canvas = await renderPageForOcr(pageInfo);
+      renderedPages.set(pageInfo.id, canvas);
+      return canvas;
+    };
+
+    try {
+      let langs = 'eng';
+      let samplePageId: string | null = null;
+      let sampleResult: Awaited<ReturnType<typeof OCRService.performOCR>> | null = null;
+
+      if (options.mode !== 'single' && candidates.length > 0) {
+        const samplePage = candidates[0];
+        samplePageId = samplePage.id;
+        dispatchOcrJob({ type: 'detecting-language', jobId });
+
+        const sampleCanvas = await getRenderedPage(samplePage);
+        if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+
+        sampleResult = await OCRService.performOCR(sampleCanvas, undefined, 'eng');
+        if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+
+        const detected = detectLanguage(sampleResult.text);
+        if (detected) {
+          langs = `eng+${detected.code}`;
+        }
+        dispatchOcrJob({ type: 'language-detected', jobId, language: langs });
+      }
+
+      const settledIds = new Set<string>();
+
+      const completePage = (pageId: string, result: Awaited<ReturnType<typeof OCRService.performOCR>>) => {
+        if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+        applyOcrResultForJob(jobId, pageId, result);
+        settledIds.add(pageId);
+        dispatchOcrJob({ type: 'page-complete', jobId, pageId });
+      };
+
+      if (sampleResult && samplePageId && langs === 'eng') {
+        updateOcrStatusForJob(jobId, samplePageId, 'running');
+        dispatchOcrJob({ type: 'page-running', jobId, pageId: samplePageId });
+        completePage(samplePageId, sampleResult);
+      }
+
+      const processPage = async (pageInfo: PdfPageInfo) => {
+        if (!isOcrJobCurrent(jobId) || ocrCancelRef.current || settledIds.has(pageInfo.id)) return;
+
+        updateOcrStatusForJob(jobId, pageInfo.id, 'running');
+        dispatchOcrJob({ type: 'page-running', jobId, pageId: pageInfo.id });
+
+        try {
+          const canvas = await getRenderedPage(pageInfo);
+          if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+
+          const result = options.mode === 'single'
+            ? await OCRService.performOCR(canvas, progress => {
+                if (isOcrJobCurrent(jobId)) {
+                  dispatchOcrJob({ type: 'page-progress', jobId, progress });
+                }
+              }, langs)
+            : await OCRService.performBatchPageOCR(canvas, langs);
+
+          if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+          completePage(pageInfo.id, result);
+        } catch (err) {
+          if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+
+          const error = getErrorMessage(err);
+          updateOcrStatusForJob(jobId, pageInfo.id, 'failed', error);
+          settledIds.add(pageInfo.id);
+          dispatchOcrJob({ type: 'page-failed', jobId, pageId: pageInfo.id, error });
+        }
+      };
+
+      const queue = candidates.filter(page => !settledIds.has(page.id));
+      const concurrency = options.mode === 'single'
+        ? 1
+        : Math.min(OCRService.POOL_SIZE, Math.max(1, queue.length));
+      let nextIndex = 0;
+
+      const worker = async () => {
+        while (nextIndex < queue.length) {
+          if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+          const pageInfo = queue[nextIndex++];
+          await processPage(pageInfo);
+        }
+      };
+
+      await Promise.all(Array.from({ length: concurrency }, worker));
+      if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+
+      dispatchOcrJob({ type: 'completed', jobId });
+    } catch (err) {
+      if (!isOcrJobCurrent(jobId) || ocrCancelRef.current) return;
+
+      const error = getErrorMessage(err);
+      dispatchOcrJob({ type: 'failed', jobId, error });
+      setPages(prev => prev.map(page => targetIds.includes(page.id) && page.ocrStatus === 'queued' ? {
+        ...page,
+        ocrStatus: 'failed',
+        ocrError: error,
+      } : page));
+    }
+  }, [applyOcrResultForJob, cancelOcr, getErrorMessage, isOcrJobCurrent, ocrJob, renderPageForOcr, updateOcrStatusForJob]);
+
+  const retryFailedOcr = useCallback(async () => {
+    if (ocrJob.failedPageIds.length === 0) return;
+    await startOcr(ocrJob.failedPageIds, {
+      mode: ocrJob.mode ?? 'batch',
+      force: true,
+      includeTextPages: true,
+    });
+  }, [ocrJob.failedPageIds, ocrJob.mode, startOcr]);
 
   const clearUndoTimer = useCallback(() => {
     if (undoTimerRef.current !== null) {
@@ -331,6 +569,8 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         analysis,
         analysisStatus: 'complete',
         analysisError: undefined,
+        ocrStatus: 'idle',
+        ocrError: undefined,
         ocrResult: undefined,
       } : p));
     } catch (err) {
@@ -383,12 +623,13 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const clearAll = useCallback(() => {
     cancelImport();
+    cancelOcr();
     setDocuments({});
     setPages([]);
     setActivePageId(null);
     setSelectedPageIds(new Set());
     setRangeInput('');
-  }, [cancelImport]);
+  }, [cancelImport, cancelOcr]);
 
   const removePageWithUndo = useCallback((id: string) => {
     const pageIndex = pages.findIndex(page => page.id === id);
@@ -471,7 +712,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       confirmLabel: 'Start over',
       danger: true,
       undoDescription: 'Cleared workspace',
-      beforeApply: cancelImport,
+      beforeApply: () => {
+        cancelImport();
+        cancelOcr();
+      },
     }, () => ({
       documents: {},
       pages: [],
@@ -479,7 +723,7 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       selectedPageIds: new Set(),
       rangeInput: '',
     }));
-  }, [cancelImport, pages.length, requestConfirmedPageMutation]);
+  }, [cancelImport, cancelOcr, pages.length, requestConfirmedPageMutation]);
 
   const reorderPage = useCallback((sourceIndex: number, destinationIndex: number) => {
     commitImmediatePageMutation('Reordered page', snapshot => {
@@ -567,9 +811,10 @@ export const PdfProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   return (
     <PdfContext.Provider value={{
-      documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob,
-      rangeInput, setRangeInput, ocrQueue, setOcrQueue,
-      addFiles, cancelImport, setPages, setActivePageId, replacePage, removePage, removePages, extractPages, clearAll,
+      documents, pages, activePageId, selectedPageIds, annotations, isLoading, importJob, ocrJob,
+      rangeInput, setRangeInput,
+      addFiles, cancelImport, startOcr, cancelOcr, retryFailedOcr,
+      setPages, setActivePageId, replacePage, removePage, removePages, extractPages, clearAll,
       removePageWithUndo, removePagesWithUndo, keepOnlyPagesWithUndo, clearAllWithUndo,
       reorderPage, reorderSelectedPages,
       pendingUndo: pendingUndoState
